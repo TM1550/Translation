@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Перевод .wts – совместный словарь</title>
-  <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
@@ -432,33 +431,32 @@
     if (user) {
       currentUser = user;
       const uid = user.uid;
-      usersRef.child(uid).once('value', (snap) => {
-        const data = snap.val() || {};
-        let name = data.displayName;
-        let role = data.role || 'translator';
-        if (!name) {
-          name = user.displayName || 'Аноним';
-          usersRef.child(uid).update({ displayName: name });
-        }
-        currentDisplayName = name;
-        currentUserRole = role;
-        userInfo.textContent = `👤 ${name} (${user.email || 'аноним'})`;
-        roleBadge.textContent = role === 'editor' ? 'Редактор' : 'Переводчик';
-        roleBadge.style.display = 'inline-block';
-        setNameBtn.style.display = 'inline-block';
-        loginGoogleBtn.style.display = 'none';
-        logoutBtn.style.display = 'inline-block';
 
-        if (role === 'editor') {
-          importBtn.style.display = 'inline-block';
-          exportBtn.style.display = 'inline-block';
-        } else {
-          importBtn.style.display = 'none';
-          exportBtn.style.display = 'none';
-        }
-        render();
-      });
+      // Получаем имя и роль из базы данных
+      usersRef.child(uid).once('value')
+        .then((snap) => {
+          const data = snap.val() || {};
+          let name = data.displayName;
+          let role = data.role || 'translator';
+          // Если имени нет в базе, берём из Google профиля
+          if (!name) {
+            name = user.displayName || 'Аноним';
+            // Сохраняем имя в базу (если есть права)
+            usersRef.child(uid).update({ displayName: name }).catch(err => {
+              console.warn('Не удалось сохранить имя в базу:', err);
+            });
+          }
+          applyUserData(name, role);
+        })
+        .catch((err) => {
+          // Если база не доступна, используем данные из профиля Google
+          console.warn('Не удалось прочитать данные пользователя из базы, используем профиль Google:', err);
+          const name = user.displayName || 'Аноним';
+          const role = 'translator'; // по умолчанию
+          applyUserData(name, role);
+        });
     } else {
+      // Пользователь вышел
       currentUser = null;
       currentDisplayName = '';
       currentUserRole = 'translator';
@@ -471,6 +469,27 @@
       exportBtn.style.display = 'none';
       render();
     }
+  }
+
+  // Вспомогательная функция для применения данных пользователя
+  function applyUserData(name, role) {
+    currentDisplayName = name;
+    currentUserRole = role;
+    userInfo.textContent = `👤 ${name} (${currentUser.email || 'аноним'})`;
+    roleBadge.textContent = role === 'editor' ? 'Редактор' : 'Переводчик';
+    roleBadge.style.display = 'inline-block';
+    setNameBtn.style.display = 'inline-block';
+    loginGoogleBtn.style.display = 'none';
+    logoutBtn.style.display = 'inline-block';
+
+    if (role === 'editor') {
+      importBtn.style.display = 'inline-block';
+      exportBtn.style.display = 'inline-block';
+    } else {
+      importBtn.style.display = 'none';
+      exportBtn.style.display = 'none';
+    }
+    render();
   }
 
   // Обработка результата перенаправления (для Google)
