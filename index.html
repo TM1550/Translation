@@ -231,11 +231,20 @@
       cursor: pointer;
       font-size: 13px;
     }
-    .entry .confirm-btn:hover { background: #0d47a1; }
+    .entry .confirm-btn:hover:not(:disabled) { background: #0d47a1; }
+    .entry .confirm-btn:disabled {
+      background: #b0bec5;
+      cursor: not-allowed;
+      opacity: 0.7;
+    }
     .entry .confirm-btn.confirmed {
       background: #e53935;
     }
-    .entry .confirm-btn.confirmed:hover { background: #c62828; }
+    .entry .confirm-btn.confirmed:hover:not(:disabled) { background: #c62828; }
+    .entry .confirm-btn.confirmed:disabled {
+      background: #b0bec5;
+      cursor: not-allowed;
+    }
     .entry .comment-section {
       flex: 1 1 100%;
       margin-top: 6px;
@@ -390,6 +399,7 @@
       <label><input type="checkbox" id="filterOnlyRussian"> Только с русскими буквами</label>
       <label><input type="checkbox" id="filterNoTranslation"> Без перевода</label>
       <label><input type="checkbox" id="filterHideEditorSuffix"> Скрыть с EditorSuffix</label>
+      <label><input type="checkbox" id="filterUnconfirmed"> Неподтверждённые переводы</label>
       <label><input type="checkbox" id="groupMode"> Группировать по шаблону</label>
     </div>
 
@@ -460,6 +470,7 @@
   const filterOnlyRussian = document.getElementById('filterOnlyRussian');
   const filterNoTranslation = document.getElementById('filterNoTranslation');
   const filterHideEditorSuffix = document.getElementById('filterHideEditorSuffix');
+  const filterUnconfirmed = document.getElementById('filterUnconfirmed');
   const groupMode = document.getElementById('groupMode');
   const perPageSelect = document.getElementById('perPage');
   const prevPageBtn = document.getElementById('prevPage');
@@ -480,7 +491,6 @@
   const modalCloseBtn = document.getElementById('modalCloseBtn');
   const modalTitle = document.getElementById('modalTitle');
   const modalCommentsList = document.getElementById('modalCommentsList');
-  let modalKey = null; // текущий ключ для модального окна
 
   // Состояние
   let allData = [];
@@ -662,6 +672,12 @@
         return !comment.toLowerCase().includes('editorsuffix');
       });
     }
+    if (filterUnconfirmed.checked) {
+      filtered = filtered.filter(item => {
+        const hasTranslation = item.translation.trim() !== '';
+        return hasTranslation && !item.confirmed;
+      });
+    }
     return filtered;
   }
 
@@ -741,13 +757,19 @@
         let translationAuthorDisplay = translationAuthorName ? `✍️ ${escapeHtml(translationAuthorName)}` : '';
         let confirmedDisplay = '';
         let confirmButton = '';
+        if (user.role === 'editor') {
+          const hasTranslation = translation.trim() !== '';
+          const isConfirmed = confirmed;
+          let btnLabel = isConfirmed ? 'Отменить подтверждение' : (hasTranslation ? 'Подтвердить' : 'Нет перевода');
+          let btnClass = 'confirm-btn';
+          if (isConfirmed) btnClass += ' confirmed';
+          if (!hasTranslation) btnClass += ' disabled';
+          const disabledAttr = hasTranslation ? '' : ' disabled';
+          const title = hasTranslation ? (isConfirmed ? 'Снять подтверждение' : 'Подтвердить перевод') : 'Нет перевода для подтверждения';
+          confirmButton = `<button class="${btnClass}" data-key="${safeKey}"${disabledAttr} title="${title}">${btnLabel}</button>`;
+        }
         if (confirmed) {
           confirmedDisplay = `<span class="confirmed-badge">✅ Подтверждено${confirmedByName ? ' (' + escapeHtml(confirmedByName) + ')' : ''}</span>`;
-        }
-        if (user.role === 'editor') {
-          const btnLabel = confirmed ? 'Отменить подтверждение' : 'Подтвердить';
-          const btnClass = confirmed ? 'confirm-btn confirmed' : 'confirm-btn';
-          confirmButton = `<button class="${btnClass}" data-key="${safeKey}">${btnLabel}</button>`;
         }
 
         // Комментарии
@@ -755,7 +777,6 @@
         if (wtsComment) {
           commentHtml += `<div class="wts-comment">📄 Из файла: ${escapeHtml(wtsComment)}</div>`;
         }
-        // Показываем последние 5 пользовательских комментариев
         const showComments = userComments.slice(-5);
         if (showComments.length > 0) {
           commentHtml += `<div style="margin-top:4px;">`;
@@ -766,12 +787,10 @@
           }
           commentHtml += `</div>`;
         }
-        // Если комментариев больше 5, показываем кнопку "Показать все"
         if (userComments.length > 5) {
           commentHtml += `<button class="show-all-btn" data-key="${safeKey}">Показать все комментарии (${userComments.length})</button>`;
         }
 
-        // Поле ввода нового комментария
         const commentInputHtml = `
           <input class="comment-input" type="text" placeholder="Оставить комментарий..." data-key="${safeKey}">
           <button class="comment-save-btn" data-key="${safeKey}">Отправить</button>
@@ -881,7 +900,7 @@
     stringsRef.child(key).update(updateData).catch(err => alert('Ошибка сохранения: ' + err.message));
   }
 
-  // ========== СОХРАНЕНИЕ КОММЕНТАРИЯ (НОВОЕ) ==========
+  // ========== СОХРАНЕНИЕ КОММЕНТАРИЯ ==========
   function handleCommentSave(e) {
     const btn = e.currentTarget;
     const key = btn.dataset.key;
@@ -901,24 +920,19 @@
       timestamp: Date.now()
     };
 
-    // Получаем текущие комментарии из allData
     const item = allData.find(d => d.key === key);
     if (!item) return;
     let comments = item.userComments || [];
     comments.push(newComment);
-    // Оставляем только последние 50
     if (comments.length > 50) {
       comments = comments.slice(-50);
     }
-    // Обновляем в базе
     stringsRef.child(key).update({ userComments: comments })
       .then(() => {
-        // Обновляем локальные данные
         const localItem = allData.find(d => d.key === key);
         if (localItem) localItem.userComments = comments;
-        // Очищаем поле ввода
         input.value = '';
-        render(); // перерисовываем для отображения нового комментария
+        render();
       })
       .catch(err => alert('Ошибка сохранения комментария: ' + err.message));
   }
@@ -932,7 +946,6 @@
     const comments = item.userComments || [];
     if (comments.length === 0) return;
 
-    modalKey = key;
     document.getElementById('modalKey').textContent = key;
     modalTitle.textContent = `Комментарии к фразе #${key}`;
 
@@ -959,17 +972,25 @@
     if (e.target === modalOverlay) modalOverlay.classList.remove('active');
   });
 
-  // ========== ПОДТВЕРЖДЕНИЕ (без изменений) ==========
+  // ========== ПОДТВЕРЖДЕНИЕ (с проверкой наличия перевода) ==========
   function handleConfirmToggle(e) {
     const btn = e.currentTarget;
     const key = btn.dataset.key;
     const item = allData.find(d => d.key === key);
     if (!item) return;
+
+    // Проверяем, есть ли перевод
+    if (item.translation.trim() === '') {
+      alert('Невозможно подтвердить: перевод отсутствует.');
+      return;
+    }
+
     const user = getCurrentUserInfo();
     if (user.role !== 'editor') {
       alert('Только редакторы могут подтверждать переводы.');
       return;
     }
+
     const newConfirmed = !item.confirmed;
     const updateData = {
       confirmed: newConfirmed,
@@ -998,12 +1019,10 @@
     }
     const entries = Object.entries(data).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
     allData = entries.map(([key, entry]) => {
-      // Миграция старых комментариев: если есть поле comment, перенести в wtsComment
       let wtsComment = entry.wtsComment || '';
       let userComments = entry.userComments || [];
       if (entry.comment && !wtsComment) {
         wtsComment = entry.comment;
-        // удаляем поле comment (не обязательно, но лучше)
       }
       return {
         key,
@@ -1157,6 +1176,7 @@
   filterOnlyRussian.addEventListener('change', () => { currentPage = 0; render(); });
   filterNoTranslation.addEventListener('change', () => { currentPage = 0; render(); });
   filterHideEditorSuffix.addEventListener('change', () => { currentPage = 0; render(); });
+  filterUnconfirmed.addEventListener('change', () => { currentPage = 0; render(); });
   groupMode.addEventListener('change', () => { currentPage = 0; render(); });
 
   refreshBtn.addEventListener('click', () => {
