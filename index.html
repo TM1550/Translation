@@ -182,14 +182,6 @@
       color: #888;
       min-width: 60px;
     }
-    .entry .comment {
-      font-size: 13px;
-      color: #5d4037;
-      background: #fff3e0;
-      padding: 2px 8px;
-      border-radius: 12px;
-      display: inline-block;
-    }
     .entry .original {
       flex: 1 1 100%;
       font-weight: 500;
@@ -250,17 +242,33 @@
       padding-top: 8px;
       border-top: 1px dashed #ccc;
     }
-    .entry .comment-section .comment-text {
-      font-size: 14px;
-      background: #fffde7;
-      padding: 6px 10px;
-      border-radius: 6px;
+    .entry .comment-section .wts-comment {
+      font-size: 13px;
+      color: #5d4037;
+      background: #fff3e0;
+      padding: 2px 8px;
+      border-radius: 12px;
+      display: inline-block;
       margin-bottom: 4px;
-      white-space: pre-wrap;
     }
-    .entry .comment-section .comment-author {
+    .entry .comment-section .user-comment {
+      font-size: 14px;
+      background: #e3f2fd;
+      padding: 4px 10px;
+      border-radius: 6px;
+      margin-bottom: 2px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .entry .comment-section .user-comment .comment-text {
+      flex: 1;
+    }
+    .entry .comment-section .user-comment .comment-author {
       font-size: 12px;
       color: #666;
+      margin-left: 8px;
+      white-space: nowrap;
     }
     .entry .comment-section .comment-input {
       width: 100%;
@@ -281,6 +289,17 @@
       margin-top: 4px;
     }
     .entry .comment-section .comment-save-btn:hover { background: #1565c0; }
+    .entry .comment-section .show-all-btn {
+      background: #4a148c;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 2px 10px;
+      cursor: pointer;
+      font-size: 12px;
+      margin-top: 4px;
+    }
+    .entry .comment-section .show-all-btn:hover { background: #6a1b9a; }
     .dictionary {
       max-height: 600px;
       overflow-y: auto;
@@ -303,6 +322,49 @@
       justify-content: space-between;
     }
     .status .online { color: #2e7d32; font-weight: 600; }
+
+    /* Модальное окно для комментариев */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.5);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+    }
+    .modal-overlay.active {
+      display: flex;
+    }
+    .modal-box {
+      background: white;
+      max-width: 600px;
+      width: 90%;
+      max-height: 80vh;
+      padding: 24px;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      overflow-y: auto;
+      position: relative;
+    }
+    .modal-box .close-btn {
+      position: absolute;
+      top: 10px;
+      right: 16px;
+      font-size: 28px;
+      cursor: pointer;
+      color: #888;
+    }
+    .modal-box .close-btn:hover { color: #333; }
+    .modal-box h3 { margin-bottom: 12px; }
+    .modal-box .modal-comment {
+      padding: 6px 0;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      justify-content: space-between;
+    }
+    .modal-box .modal-comment .modal-text { flex: 1; }
+    .modal-box .modal-comment .modal-author { font-size: 12px; color: #666; margin-left: 12px; white-space: nowrap; }
   </style>
 </head>
 <body>
@@ -350,6 +412,15 @@
 
   <div id="dictionaryContainer" class="dictionary">
     <div class="loader">Загрузка словаря...</div>
+  </div>
+
+  <!-- Модальное окно для комментариев -->
+  <div class="modal-overlay" id="commentsModal">
+    <div class="modal-box">
+      <span class="close-btn" id="modalCloseBtn">&times;</span>
+      <h3 id="modalTitle">Комментарии к фразе #<span id="modalKey"></span></h3>
+      <div id="modalCommentsList"></div>
+    </div>
   </div>
 
   <div class="status">
@@ -404,6 +475,13 @@
   const logoutBtn = document.getElementById('logoutBtn');
   const setNameBtn = document.getElementById('setNameBtn');
 
+  // Модальное окно
+  const modalOverlay = document.getElementById('commentsModal');
+  const modalCloseBtn = document.getElementById('modalCloseBtn');
+  const modalTitle = document.getElementById('modalTitle');
+  const modalCommentsList = document.getElementById('modalCommentsList');
+  let modalKey = null; // текущий ключ для модального окна
+
   // Состояние
   let allData = [];
   let currentPage = 0;
@@ -414,7 +492,6 @@
 
   // ========== АВТОРИЗАЦИЯ ==========
 
-  // Проверка поддержки окружения
   function isAuthSupported() {
     try {
       localStorage.setItem('test', 'test');
@@ -427,13 +504,10 @@
     }
   }
 
-  // Обновление интерфейса после получения пользователя
   function updateAuthUI(user) {
     if (user) {
       currentUser = user;
       const uid = user.uid;
-
-      // Получаем имя и роль из базы данных
       usersRef.child(uid).once('value')
         .then((snap) => {
           const data = snap.val() || {};
@@ -441,20 +515,15 @@
           let role = data.role || 'translator';
           if (!name) {
             name = user.displayName || 'Аноним';
-            usersRef.child(uid).update({ displayName: name }).catch(err => {
-              console.warn('Не удалось сохранить имя в базу:', err);
-            });
+            usersRef.child(uid).update({ displayName: name }).catch(err => console.warn(err));
           }
           applyUserData(name, role);
         })
-        .catch((err) => {
-          console.warn('Не удалось прочитать данные пользователя из базы, используем профиль Google:', err);
+        .catch(() => {
           const name = user.displayName || 'Аноним';
-          const role = 'translator';
-          applyUserData(name, role);
+          applyUserData(name, 'translator');
         });
     } else {
-      // Пользователь вышел
       currentUser = null;
       currentDisplayName = '';
       currentUserRole = 'translator';
@@ -469,7 +538,6 @@
     }
   }
 
-  // Вспомогательная функция для применения данных пользователя
   function applyUserData(name, role) {
     currentDisplayName = name;
     currentUserRole = role;
@@ -479,7 +547,6 @@
     setNameBtn.style.display = 'inline-block';
     loginGoogleBtn.style.display = 'none';
     logoutBtn.style.display = 'inline-block';
-
     if (role === 'editor') {
       importBtn.style.display = 'inline-block';
       exportBtn.style.display = 'inline-block';
@@ -490,25 +557,17 @@
     render();
   }
 
-  // Вход через Google (с popup)
   loginGoogleBtn.addEventListener('click', () => {
     if (!isAuthSupported()) {
-      alert('Авторизация не поддерживается в текущем окружении. Используйте HTTPS.');
+      alert('Авторизация не поддерживается в текущем окружении.');
       return;
     }
     const provider = new firebase.auth.GoogleAuthProvider();
-    auth.signInWithPopup(provider)
-      .catch(err => {
-        alert('Ошибка входа: ' + err.message);
-      });
+    auth.signInWithPopup(provider).catch(err => alert('Ошибка входа: ' + err.message));
   });
 
-  // Выход
-  logoutBtn.addEventListener('click', () => {
-    auth.signOut();
-  });
+  logoutBtn.addEventListener('click', () => { auth.signOut(); });
 
-  // Установка имени
   setNameBtn.addEventListener('click', () => {
     if (!currentUser) return;
     const newName = prompt('Введите ваше отображаемое имя:', currentDisplayName);
@@ -523,10 +582,7 @@
     }
   });
 
-  // Слушатель состояния авторизации
-  auth.onAuthStateChanged(user => {
-    updateAuthUI(user);
-  });
+  auth.onAuthStateChanged(user => { updateAuthUI(user); });
 
   // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
@@ -537,14 +593,17 @@
     return { uid: null, displayName: 'Аноним', role: 'translator' };
   }
 
-  function hasRussian(text) {
-    return /[а-яё]/i.test(text);
-  }
-
+  function hasRussian(text) { return /[а-яё]/i.test(text); }
   function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  function formatTimestamp(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
   function extractNumbers(str) {
@@ -599,7 +658,7 @@
     }
     if (filterHideEditorSuffix.checked) {
       filtered = filtered.filter(item => {
-        const comment = item.comment || '';
+        const comment = item.wtsComment || '';
         return !comment.toLowerCase().includes('editorsuffix');
       });
     }
@@ -627,7 +686,7 @@
     return items.slice(start, start + itemsPerPage);
   }
 
-  // ========== ОСНОВНАЯ ФУНКЦИЯ ОТРИСОВКИ ==========
+  // ========== РЕНДЕРИНГ ==========
   function render() {
     try {
       const displayItems = getDisplayItems();
@@ -663,9 +722,8 @@
         const key = item.key;
         const original = item.original || '';
         const translation = item.translation || '';
-        const comment = item.comment || '';
-        const commentAuthor = item.commentAuthor || '';
-        const commentAuthorName = item.commentAuthorName || '';
+        const wtsComment = item.wtsComment || '';
+        const userComments = item.userComments || [];
         const translationAuthor = item.translationAuthor || '';
         const translationAuthorName = item.translationAuthorName || '';
         const confirmed = item.confirmed || false;
@@ -692,18 +750,36 @@
           confirmButton = `<button class="${btnClass}" data-key="${safeKey}">${btnLabel}</button>`;
         }
 
+        // Комментарии
         let commentHtml = '';
-        if (comment) {
-          commentHtml = `<div class="comment-text">${escapeHtml(comment)}</div>`;
-          if (commentAuthorName) {
-            commentHtml += `<div class="comment-author">💬 ${escapeHtml(commentAuthorName)}</div>`;
-          }
+        if (wtsComment) {
+          commentHtml += `<div class="wts-comment">📄 Из файла: ${escapeHtml(wtsComment)}</div>`;
         }
+        // Показываем последние 5 пользовательских комментариев
+        const showComments = userComments.slice(-5);
+        if (showComments.length > 0) {
+          commentHtml += `<div style="margin-top:4px;">`;
+          for (const c of showComments) {
+            const author = c.authorName || 'Аноним';
+            const text = c.text || '';
+            commentHtml += `<div class="user-comment"><span class="comment-text">${escapeHtml(text)}</span><span class="comment-author">${escapeHtml(author)}</span></div>`;
+          }
+          commentHtml += `</div>`;
+        }
+        // Если комментариев больше 5, показываем кнопку "Показать все"
+        if (userComments.length > 5) {
+          commentHtml += `<button class="show-all-btn" data-key="${safeKey}">Показать все комментарии (${userComments.length})</button>`;
+        }
+
+        // Поле ввода нового комментария
+        const commentInputHtml = `
+          <input class="comment-input" type="text" placeholder="Оставить комментарий..." data-key="${safeKey}">
+          <button class="comment-save-btn" data-key="${safeKey}">Отправить</button>
+        `;
 
         html += `
           <div class="entry ${groupClass}" data-key="${safeKey}" data-group='${JSON.stringify(item._groupMembers || [])}'>
             <span class="meta">#${key}</span>
-            ${item.comment ? `<span class="comment">${escapeHtml(item.comment)}</span>` : ''}
             <div class="original">${escapeHtml(original)}</div>
             <input class="translation-input" type="text" value="${escapeHtml(translation)}" data-key="${safeKey}" placeholder="Введите перевод...">
             ${groupInfo ? `<span class="group-info">${groupInfo}</span>` : ''}
@@ -714,8 +790,7 @@
             </div>
             <div class="comment-section">
               ${commentHtml}
-              <input class="comment-input" type="text" placeholder="Оставить комментарий..." data-key="${safeKey}">
-              <button class="comment-save-btn" data-key="${safeKey}">Сохранить комментарий</button>
+              ${commentInputHtml}
             </div>
           </div>
         `;
@@ -723,6 +798,7 @@
       container.innerHTML = html;
       countStatus.textContent = totalDisplay;
 
+      // Обработчики
       container.querySelectorAll('.translation-input').forEach(input => {
         input.removeEventListener('change', handleTranslationChange);
         input.addEventListener('change', handleTranslationChange);
@@ -736,6 +812,11 @@
       container.querySelectorAll('.confirm-btn').forEach(btn => {
         btn.removeEventListener('click', handleConfirmToggle);
         btn.addEventListener('click', handleConfirmToggle);
+      });
+
+      container.querySelectorAll('.show-all-btn').forEach(btn => {
+        btn.removeEventListener('click', handleShowAllComments);
+        btn.addEventListener('click', handleShowAllComments);
       });
     } catch (err) {
       console.error('Ошибка при рендеринге:', err);
@@ -785,8 +866,7 @@
           };
         }
         for (const [k, val] of Object.entries(updates)) {
-          stringsRef.child(k).update(val)
-            .catch(err => alert('Ошибка сохранения для #' + k + ': ' + err.message));
+          stringsRef.child(k).update(val).catch(err => alert('Ошибка сохранения для #' + k + ': ' + err.message));
         }
         render();
         return;
@@ -798,15 +878,15 @@
       translationAuthor: user.uid,
       translationAuthorName: user.displayName
     };
-    stringsRef.child(key).update(updateData)
-      .catch(err => alert('Ошибка сохранения: ' + err.message));
+    stringsRef.child(key).update(updateData).catch(err => alert('Ошибка сохранения: ' + err.message));
   }
 
+  // ========== СОХРАНЕНИЕ КОММЕНТАРИЯ (НОВОЕ) ==========
   function handleCommentSave(e) {
     const btn = e.currentTarget;
     const key = btn.dataset.key;
-    const section = btn.closest('.entry').querySelector('.comment-section');
-    const input = section.querySelector('.comment-input');
+    const entry = btn.closest('.entry');
+    const input = entry.querySelector('.comment-input');
     const commentText = input.value.trim();
     if (commentText === '') {
       alert('Комментарий не может быть пустым.');
@@ -814,44 +894,88 @@
     }
 
     const user = getCurrentUserInfo();
-    const updateData = {
-      comment: commentText,
-      commentAuthor: user.uid,
-      commentAuthorName: user.displayName
+    const newComment = {
+      author: user.uid,
+      authorName: user.displayName,
+      text: commentText,
+      timestamp: Date.now()
     };
 
-    stringsRef.child(key).update(updateData)
+    // Получаем текущие комментарии из allData
+    const item = allData.find(d => d.key === key);
+    if (!item) return;
+    let comments = item.userComments || [];
+    comments.push(newComment);
+    // Оставляем только последние 50
+    if (comments.length > 50) {
+      comments = comments.slice(-50);
+    }
+    // Обновляем в базе
+    stringsRef.child(key).update({ userComments: comments })
       .then(() => {
-        const item = allData.find(d => d.key === key);
-        if (item) {
-          item.comment = commentText;
-          item.commentAuthor = user.uid;
-          item.commentAuthorName = user.displayName;
-        }
-        render();
+        // Обновляем локальные данные
+        const localItem = allData.find(d => d.key === key);
+        if (localItem) localItem.userComments = comments;
+        // Очищаем поле ввода
+        input.value = '';
+        render(); // перерисовываем для отображения нового комментария
       })
       .catch(err => alert('Ошибка сохранения комментария: ' + err.message));
   }
 
+  // ========== ПОКАЗ ВСЕХ КОММЕНТАРИЕВ В МОДАЛЬНОМ ОКНЕ ==========
+  function handleShowAllComments(e) {
+    const btn = e.currentTarget;
+    const key = btn.dataset.key;
+    const item = allData.find(d => d.key === key);
+    if (!item) return;
+    const comments = item.userComments || [];
+    if (comments.length === 0) return;
+
+    modalKey = key;
+    document.getElementById('modalKey').textContent = key;
+    modalTitle.textContent = `Комментарии к фразе #${key}`;
+
+    let listHtml = '';
+    for (const c of comments) {
+      const author = c.authorName || 'Аноним';
+      const text = c.text || '';
+      const time = c.timestamp ? formatTimestamp(c.timestamp) : '';
+      listHtml += `
+        <div class="modal-comment">
+          <span class="modal-text">${escapeHtml(text)}</span>
+          <span class="modal-author">${escapeHtml(author)} ${time ? '— ' + time : ''}</span>
+        </div>
+      `;
+    }
+    modalCommentsList.innerHTML = listHtml;
+    modalOverlay.classList.add('active');
+  }
+
+  modalCloseBtn.addEventListener('click', () => {
+    modalOverlay.classList.remove('active');
+  });
+  modalOverlay.addEventListener('click', (e) => {
+    if (e.target === modalOverlay) modalOverlay.classList.remove('active');
+  });
+
+  // ========== ПОДТВЕРЖДЕНИЕ (без изменений) ==========
   function handleConfirmToggle(e) {
     const btn = e.currentTarget;
     const key = btn.dataset.key;
     const item = allData.find(d => d.key === key);
     if (!item) return;
-
     const user = getCurrentUserInfo();
     if (user.role !== 'editor') {
       alert('Только редакторы могут подтверждать переводы.');
       return;
     }
-
     const newConfirmed = !item.confirmed;
     const updateData = {
       confirmed: newConfirmed,
       confirmedBy: newConfirmed ? user.uid : null,
       confirmedByName: newConfirmed ? user.displayName : null
     };
-
     stringsRef.child(key).update(updateData)
       .then(() => {
         if (item) {
@@ -873,19 +997,27 @@
       return;
     }
     const entries = Object.entries(data).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
-    allData = entries.map(([key, entry]) => ({
-      key,
-      original: entry.original || '',
-      translation: entry.translation || '',
-      translationAuthor: entry.translationAuthor || '',
-      translationAuthorName: entry.translationAuthorName || '',
-      comment: entry.comment || '',
-      commentAuthor: entry.commentAuthor || '',
-      commentAuthorName: entry.commentAuthorName || '',
-      confirmed: entry.confirmed || false,
-      confirmedBy: entry.confirmedBy || '',
-      confirmedByName: entry.confirmedByName || ''
-    }));
+    allData = entries.map(([key, entry]) => {
+      // Миграция старых комментариев: если есть поле comment, перенести в wtsComment
+      let wtsComment = entry.wtsComment || '';
+      let userComments = entry.userComments || [];
+      if (entry.comment && !wtsComment) {
+        wtsComment = entry.comment;
+        // удаляем поле comment (не обязательно, но лучше)
+      }
+      return {
+        key,
+        original: entry.original || '',
+        translation: entry.translation || '',
+        translationAuthor: entry.translationAuthor || '',
+        translationAuthorName: entry.translationAuthorName || '',
+        wtsComment: wtsComment,
+        userComments: Array.isArray(userComments) ? userComments : [],
+        confirmed: entry.confirmed || false,
+        confirmedBy: entry.confirmedBy || '',
+        confirmedByName: entry.confirmedByName || ''
+      };
+    });
     render();
   });
 
@@ -921,9 +1053,8 @@
             translation: '',
             translationAuthor: '',
             translationAuthorName: '',
-            comment: '',
-            commentAuthor: '',
-            commentAuthorName: '',
+            wtsComment: item.comment,
+            userComments: [],
             confirmed: false,
             confirmedBy: '',
             confirmedByName: ''
@@ -954,7 +1085,7 @@
       const original = entry.original || '';
       const translation = entry.translation || '';
       const textToWrite = translation.trim() !== '' ? translation : original;
-      const comment = entry.comment || '';
+      const comment = entry.wtsComment || '';
       output += `STRING ${key}`;
       if (comment) output += ` // ${comment}`;
       output += `\n{\n${textToWrite}\n}\n\n`;
