@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Совместный словарь переводов</title>
-  <!-- Подключаем Firebase SDK (совместимая версия) -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Перевод .wts – совместный словарь</title>
+  <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <style>
@@ -12,12 +12,12 @@
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       background: #f0f2f5;
+      padding: 20px;
       display: flex;
       justify-content: center;
-      padding: 20px;
     }
     .app {
-      max-width: 800px;
+      max-width: 900px;
       width: 100%;
       background: white;
       padding: 24px;
@@ -25,64 +25,79 @@
       box-shadow: 0 8px 24px rgba(0,0,0,0.1);
     }
     h1 { text-align: center; color: #1a237e; margin-bottom: 20px; }
-    .add-area {
+    .toolbar {
       display: flex;
-      gap: 10px;
-      margin-bottom: 20px;
+      gap: 12px;
       flex-wrap: wrap;
+      margin-bottom: 20px;
+      align-items: center;
     }
-    .add-area input {
-      flex: 1;
-      padding: 10px 14px;
-      border: 2px solid #cfd8dc;
-      border-radius: 8px;
-      font-size: 16px;
-      min-width: 120px;
-    }
-    .add-area input:focus {
-      border-color: #0d47a1;
-      outline: none;
-    }
-    .add-area button {
-      padding: 10px 24px;
-      background: #0d47a1;
-      color: white;
+    .toolbar button {
+      padding: 8px 20px;
       border: none;
       border-radius: 8px;
-      font-size: 16px;
+      font-size: 15px;
       cursor: pointer;
-      transition: background 0.2s;
+      background: #0d47a1;
+      color: white;
+      transition: 0.2s;
     }
-    .add-area button:hover { background: #1565c0; }
-    .dictionary {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      max-height: 500px;
-      overflow-y: auto;
-      margin-bottom: 16px;
+    .toolbar button:hover { background: #1565c0; }
+    .toolbar .export-btn { background: #2e7d32; }
+    .toolbar .export-btn:hover { background: #388e3c; }
+    .toolbar .import-label {
+      background: #e65100;
+      color: white;
+      padding: 8px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: inline-block;
+    }
+    .toolbar .import-label:hover { background: #bf360c; }
+    #fileInput { display: none; }
+    .stats {
+      margin-left: auto;
+      font-size: 14px;
+      color: #555;
     }
     .entry {
       display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 10px 14px;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 8px 12px;
+      padding: 12px 14px;
       background: #f8f9fa;
       border-radius: 8px;
       border-left: 4px solid #0d47a1;
+      margin-bottom: 8px;
     }
-    .entry .phrase {
-      font-weight: 600;
-      width: 150px;
-      flex-shrink: 0;
+    .entry .meta {
+      font-size: 13px;
+      color: #888;
+      min-width: 60px;
+    }
+    .entry .comment {
+      font-size: 13px;
+      color: #5d4037;
+      background: #fff3e0;
+      padding: 2px 8px;
+      border-radius: 12px;
+      display: inline-block;
+    }
+    .entry .original {
+      flex: 1 1 100%;
+      font-weight: 500;
+      padding: 4px 0;
+      white-space: pre-wrap;
       word-break: break-word;
     }
     .entry .translation-input {
-      flex: 1;
+      flex: 2 1 200px;
       padding: 6px 10px;
       border: 1px solid #cfd8dc;
       border-radius: 6px;
       font-size: 15px;
+      min-width: 150px;
     }
     .entry .translation-input:focus {
       border-color: #0d47a1;
@@ -95,47 +110,55 @@
       border-radius: 6px;
       padding: 4px 12px;
       cursor: pointer;
-      font-size: 14px;
+      font-size: 13px;
     }
     .entry .delete-btn:hover { background: #c62828; }
-    .status {
-      font-size: 14px;
-      color: #546e7a;
-      text-align: center;
-      border-top: 1px solid #ecf0f1;
-      padding-top: 12px;
-    }
-    .status .online {
-      color: #2e7d32;
-      font-weight: 600;
+    .dictionary {
+      max-height: 600px;
+      overflow-y: auto;
     }
     .loader {
       text-align: center;
       padding: 20px;
       color: #888;
     }
+    .status {
+      margin-top: 16px;
+      font-size: 14px;
+      color: #546e7a;
+      border-top: 1px solid #ecf0f1;
+      padding-top: 12px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .status .online { color: #2e7d32; font-weight: 600; }
+    .error-message { color: #c62828; }
   </style>
 </head>
 <body>
 <div class="app">
-  <h1>📚 Совместный перевод фраз</h1>
-  <div class="add-area">
-    <input type="text" id="newPhrase" placeholder="Фраза на оригинальном языке">
-    <input type="text" id="newTranslation" placeholder="Перевод">
-    <button id="addBtn">➕ Добавить</button>
-    <button id="refreshBtn" style="background:#2e7d32;">🔄 Обновить</button>
+  <h1>📚 Перевод .wts – совместная работа</h1>
+
+  <div class="toolbar">
+    <button id="refreshBtn">🔄 Обновить</button>
+    <label class="import-label" id="importLabel">📂 Загрузить .wts</label>
+    <input type="file" id="fileInput" accept=".wts" />
+    <button class="export-btn" id="exportBtn">⬇ Скачать .wts</button>
+    <span class="stats" id="stats">Записей: 0</span>
   </div>
+
   <div id="dictionaryContainer" class="dictionary">
     <div class="loader">Загрузка словаря...</div>
   </div>
+
   <div class="status">
     <span id="connectionStatus">⏳ Подключение...</span>
-    <span id="countStatus">Записей: 0</span>
+    <span id="countStatus">0</span>
   </div>
 </div>
 
 <script>
-  // ============ ВСТАВЬТЕ СВОЮ КОНФИГУРАЦИЮ FIREBASE ============
+  // ============ КОНФИГУРАЦИЯ FIREBASE (ЗАМЕНИТЕ) ============
   const firebaseConfig = {
     apiKey: "AIzaSyATbe93bnOiAQmdTUX1dh22UXwtA_dbMWI",
     authDomain: "translatorapp-6fd48.firebaseapp.com",
@@ -147,122 +170,203 @@
   };
   // =============================================================
 
-  // Инициализация Firebase
   firebase.initializeApp(firebaseConfig);
   const db = firebase.database();
-  const phrasesRef = db.ref('phrases');
+  const stringsRef = db.ref('strings');
 
-  // DOM-элементы
+  // DOM элементы
   const container = document.getElementById('dictionaryContainer');
-  const newPhraseInput = document.getElementById('newPhrase');
-  const newTranslationInput = document.getElementById('newTranslation');
-  const addBtn = document.getElementById('addBtn');
-  const refreshBtn = document.getElementById('refreshBtn');
-  const connectionStatus = document.getElementById('connectionStatus');
+  const statsSpan = document.getElementById('stats');
   const countStatus = document.getElementById('countStatus');
+  const connectionStatus = document.getElementById('connectionStatus');
+  const fileInput = document.getElementById('fileInput');
+  const exportBtn = document.getElementById('exportBtn');
+  const refreshBtn = document.getElementById('refreshBtn');
 
-  // Отслеживаем статус подключения
+  // Состояние подключения
   const connectedRef = firebase.database().ref('.info/connected');
   connectedRef.on('value', (snap) => {
-    if (snap.val() === true) {
+    if (snap.val()) {
       connectionStatus.innerHTML = '✅ Подключено к Firebase';
       connectionStatus.style.color = '#2e7d32';
     } else {
-      connectionStatus.innerHTML = '❌ Офлайн (изменения сохранятся при восстановлении)';
+      connectionStatus.innerHTML = '❌ Офлайн (изменения сохранятся позже)';
       connectionStatus.style.color = '#e53935';
     }
   });
 
-  // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В БАЗЕ (РЕАЛЬНОЕ ВРЕМЯ) ==========
-  phrasesRef.on('value', (snapshot) => {
+  // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В РЕАЛЬНОМ ВРЕМЕНИ ==========
+  stringsRef.on('value', (snapshot) => {
     const data = snapshot.val();
     if (!data) {
-      container.innerHTML = '<div class="loader">Словарь пуст. Добавьте первую фразу!</div>';
-      countStatus.textContent = 'Записей: 0';
+      container.innerHTML = '<div class="loader">Словарь пуст. Загрузите .wts или добавьте вручную.</div>';
+      statsSpan.textContent = 'Записей: 0';
+      countStatus.textContent = '0';
       return;
     }
+    // Преобразуем объект в массив и сортируем по номеру (ключу)
+    const entries = Object.entries(data).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
+    statsSpan.textContent = `Записей: ${entries.length}`;
+    countStatus.textContent = entries.length;
 
-    const entries = Object.entries(data);
-    countStatus.textContent = `Записей: ${entries.length}`;
-
-    // Строим список
     let html = '';
-    for (const [phrase, translation] of entries) {
-      const safePhrase = phrase.replace(/"/g, '&quot;');
+    for (const [key, entry] of entries) {
+      const original = entry.original || '';
+      const translation = entry.translation || '';
+      const comment = entry.comment || '';
+      const safeKey = key.replace(/"/g, '&quot;');
       html += `
-        <div class="entry" data-phrase="${safePhrase}">
-          <span class="phrase">${escapeHtml(phrase)}</span>
-          <input class="translation-input" type="text" value="${escapeHtml(translation)}" data-phrase="${safePhrase}">
-          <button class="delete-btn" data-phrase="${safePhrase}">✕</button>
+        <div class="entry" data-key="${safeKey}">
+          <span class="meta">#${key}</span>
+          ${comment ? `<span class="comment">${escapeHtml(comment)}</span>` : ''}
+          <div class="original">${escapeHtml(original)}</div>
+          <input class="translation-input" type="text" value="${escapeHtml(translation)}" data-key="${safeKey}" placeholder="Введите перевод...">
+          <button class="delete-btn" data-key="${safeKey}">✕</button>
         </div>
       `;
     }
     container.innerHTML = html;
 
-    // Назначаем обработчики на инпуты (сохранение при потере фокуса)
+    // Обработчики изменения перевода (сохранение в Firebase)
     container.querySelectorAll('.translation-input').forEach(input => {
-      const phrase = input.dataset.phrase;
+      const key = input.dataset.key;
       input.addEventListener('change', function(e) {
         const newTranslation = e.target.value.trim();
         if (newTranslation === '') {
-          alert('Перевод не может быть пустым');
-          e.target.value = data[phrase] || '';
+          alert('Перевод не может быть пустым. Чтобы удалить запись, используйте кнопку ✕.');
+          e.target.value = data[key]?.translation || '';
           return;
         }
-        // Сохраняем в Firebase
-        phrasesRef.child(phrase).set(newTranslation)
+        // Обновляем только поле translation
+        stringsRef.child(key).update({ translation: newTranslation })
           .catch(err => alert('Ошибка сохранения: ' + err.message));
+      });
+      // Также сохраняем при потере фокуса (если не изменилось, ничего не делаем)
+      input.addEventListener('blur', function(e) {
+        // Уже обработано change
       });
     });
 
-    // Назначаем обработчики на кнопки удаления
+    // Обработчики удаления
     container.querySelectorAll('.delete-btn').forEach(btn => {
-      const phrase = btn.dataset.phrase;
+      const key = btn.dataset.key;
       btn.addEventListener('click', function() {
-        if (confirm(`Удалить фразу "${phrase}"?`)) {
-          phrasesRef.child(phrase).remove()
+        if (confirm(`Удалить строку #${key}?`)) {
+          stringsRef.child(key).remove()
             .catch(err => alert('Ошибка удаления: ' + err.message));
         }
       });
     });
   });
 
-  // ========== ДОБАВЛЕНИЕ НОВОЙ ФРАЗЫ ==========
-  function addPhrase() {
-    const phrase = newPhraseInput.value.trim();
-    const translation = newTranslationInput.value.trim();
-    if (!phrase || !translation) {
-      alert('Заполните оба поля');
-      return;
+  // ========== ИМПОРТ .WTS ==========
+  function parseWTS(text) {
+    // Регулярное выражение для поиска блоков:
+    // STRING номер [ // комментарий ] \n? { текст }
+    // Комментарий может отсутствовать.
+    const regex = /STRING\s+(\d+)\s*(?:\/\/\s*([^\n]*))?\s*\{([\s\S]*?)\}/g;
+    const entries = [];
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      const number = match[1];
+      const comment = (match[2] || '').trim();
+      const content = match[3].trim();
+      entries.push({ number, comment, content });
     }
+    return entries;
+  }
 
-    // Проверяем, существует ли уже такая фраза
-    phrasesRef.child(phrase).once('value', (snap) => {
-      if (snap.exists()) {
-        alert('Такая фраза уже есть. Отредактируйте её перевод в списке.');
+  function importWTS(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const text = e.target.result;
+      const parsed = parseWTS(text);
+      if (parsed.length === 0) {
+        alert('Не удалось найти ни одной строки STRING в файле. Проверьте формат.');
         return;
       }
-      phrasesRef.child(phrase).set(translation)
+      // Подтверждение перед импортом (перезапишет существующие строки с такими номерами)
+      if (!confirm(`Найдено ${parsed.length} строк. Импортировать? (строки с существующими номерами будут перезаписаны)`)) return;
+
+      // Загружаем все в Firebase (обновляем)
+      const updates = {};
+      for (const item of parsed) {
+        updates[item.number] = {
+          original: item.content,
+          translation: '',
+          comment: item.comment
+        };
+      }
+      stringsRef.update(updates)
         .then(() => {
-          newPhraseInput.value = '';
-          newTranslationInput.value = '';
+          alert(`Импортировано ${parsed.length} строк.`);
         })
-        .catch(err => alert('Ошибка добавления: ' + err.message));
+        .catch(err => alert('Ошибка импорта: ' + err.message));
+    };
+    reader.onerror = function() {
+      alert('Ошибка чтения файла');
+    };
+    reader.readAsText(file, 'UTF-8');
+  }
+
+  fileInput.addEventListener('change', function(e) {
+    if (this.files && this.files[0]) {
+      importWTS(this.files[0]);
+    }
+    this.value = ''; // сброс, чтобы можно было загрузить тот же файл повторно
+  });
+
+  // ========== ЭКСПОРТ .WTS ==========
+  function generateWTS(data) {
+    // data – объект { номер: { original, translation, comment } }
+    const keys = Object.keys(data).sort((a, b) => parseInt(a) - parseInt(b));
+    let output = '';
+    for (const key of keys) {
+      const entry = data[key];
+      const original = entry.original || '';
+      const translation = entry.translation || '';
+      // При экспорте мы пишем переведённый текст (если есть), иначе оригинал.
+      // По логике, пользователь хочет получить .wts с переведёнными строками, поэтому используем translation, если он не пуст.
+      const textToWrite = translation.trim() !== '' ? translation : original;
+      const comment = entry.comment || '';
+      output += `STRING ${key}`;
+      if (comment) {
+        output += ` // ${comment}`;
+      }
+      output += `\n{\n${textToWrite}\n}\n\n`;
+    }
+    return output;
+  }
+
+  function exportWTS() {
+    stringsRef.once('value', (snapshot) => {
+      const data = snapshot.val();
+      if (!data || Object.keys(data).length === 0) {
+        alert('Нет данных для экспорта.');
+        return;
+      }
+      const wtsText = generateWTS(data);
+      // Создаём файл для скачивания
+      const blob = new Blob([wtsText], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'translated_strings.wts';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     });
   }
 
-  addBtn.addEventListener('click', addPhrase);
+  exportBtn.addEventListener('click', exportWTS);
 
-  // Добавление по Enter в полях
-  newPhraseInput.addEventListener('keyup', (e) => { if (e.key === 'Enter') addPhrase(); });
-  newTranslationInput.addEventListener('keyup', (e) => { if (e.key === 'Enter') addPhrase(); });
-
-  // Кнопка "Обновить" принудительно перезагружает данные (но они и так обновляются автоматически)
+  // ========== ОБНОВИТЬ (рефреш) ==========
   refreshBtn.addEventListener('click', () => {
-    // Просто дергаем чтение, чтобы обновить статус
-    phrasesRef.once('value', (snap) => {
-      const count = snap.val() ? Object.keys(snap.val()).length : 0;
-      countStatus.textContent = `Записей: ${count} (обновлено)`;
+    stringsRef.once('value', (snap) => {
+      const data = snap.val();
+      const count = data ? Object.keys(data).length : 0;
+      countStatus.textContent = count;
     });
   });
 
@@ -272,6 +376,10 @@
     div.textContent = text;
     return div.innerHTML;
   }
+
+  // ========== ИНИЦИАЛИЗАЦИЯ ==========
+  // При первом запуске, если база пуста, можно ничего не делать.
+  console.log('Приложение готово.');
 </script>
 </body>
 </html>
