@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Перевод .wts – совместный словарь</title>
-  <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
@@ -491,6 +490,7 @@
   const modalCloseBtn = document.getElementById('modalCloseBtn');
   const modalTitle = document.getElementById('modalTitle');
   const modalCommentsList = document.getElementById('modalCommentsList');
+  const modalKeySpan = document.getElementById('modalKey');
 
   // Состояние
   let allData = [];
@@ -817,7 +817,7 @@
       container.innerHTML = html;
       countStatus.textContent = totalDisplay;
 
-      // Обработчики
+      // Обработчики (кроме show-all-btn, для них используем делегирование)
       container.querySelectorAll('.translation-input').forEach(input => {
         input.removeEventListener('change', handleTranslationChange);
         input.addEventListener('change', handleTranslationChange);
@@ -833,10 +833,7 @@
         btn.addEventListener('click', handleConfirmToggle);
       });
 
-      container.querySelectorAll('.show-all-btn').forEach(btn => {
-        btn.removeEventListener('click', handleShowAllComments);
-        btn.addEventListener('click', handleShowAllComments);
-      });
+      // show-all-btn обрабатывается через делегирование на container (добавлено один раз вне render)
     } catch (err) {
       console.error('Ошибка при рендеринге:', err);
       container.innerHTML = `<div class="loader" style="color:#c62828;">Ошибка отображения: ${err.message}</div>`;
@@ -937,16 +934,15 @@
       .catch(err => alert('Ошибка сохранения комментария: ' + err.message));
   }
 
-  // ========== ПОКАЗ ВСЕХ КОММЕНТАРИЕВ В МОДАЛЬНОМ ОКНЕ ==========
-  function handleShowAllComments(e) {
-    const btn = e.currentTarget;
-    const key = btn.dataset.key;
+  // ========== ПОКАЗ ВСЕХ КОММЕНТАРИЕВ (делегирование) ==========
+  // Функция открытия модального окна по ключу
+  function showAllCommentsForKey(key) {
     const item = allData.find(d => d.key === key);
     if (!item) return;
     const comments = item.userComments || [];
     if (comments.length === 0) return;
 
-    document.getElementById('modalKey').textContent = key;
+    modalKeySpan.textContent = key;
     modalTitle.textContent = `Комментарии к фразе #${key}`;
 
     let listHtml = '';
@@ -965,6 +961,18 @@
     modalOverlay.classList.add('active');
   }
 
+  // Обработчик клика на кнопках show-all-btn через делегирование
+  container.addEventListener('click', function(e) {
+    const btn = e.target.closest('.show-all-btn');
+    if (btn) {
+      const key = btn.dataset.key;
+      if (key) {
+        showAllCommentsForKey(key);
+      }
+    }
+  });
+
+  // Закрытие модального окна
   modalCloseBtn.addEventListener('click', () => {
     modalOverlay.classList.remove('active');
   });
@@ -972,14 +980,13 @@
     if (e.target === modalOverlay) modalOverlay.classList.remove('active');
   });
 
-  // ========== ПОДТВЕРЖДЕНИЕ (с проверкой наличия перевода) ==========
+  // ========== ПОДТВЕРЖДЕНИЕ ==========
   function handleConfirmToggle(e) {
     const btn = e.currentTarget;
     const key = btn.dataset.key;
     const item = allData.find(d => d.key === key);
     if (!item) return;
 
-    // Проверяем, есть ли перевод
     if (item.translation.trim() === '') {
       alert('Невозможно подтвердить: перевод отсутствует.');
       return;
