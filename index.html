@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Перевод .wts – совместный словарь</title>
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -49,6 +49,14 @@
     .auth-bar .user-info {
       font-weight: 500;
       margin-right: auto;
+    }
+    .auth-bar .role-badge {
+      background: #ffca28;
+      padding: 2px 10px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #333;
     }
     .auth-bar .set-name-btn {
       background: #2e7d32;
@@ -214,6 +222,28 @@
       color: #666;
       margin: 2px 0;
     }
+    .entry .confirmed-badge {
+      font-size: 13px;
+      color: #2e7d32;
+      background: #e8f5e9;
+      padding: 2px 10px;
+      border-radius: 12px;
+      margin-left: 8px;
+    }
+    .entry .confirm-btn {
+      background: #1565c0;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 4px 12px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .entry .confirm-btn:hover { background: #0d47a1; }
+    .entry .confirm-btn.confirmed {
+      background: #e53935;
+    }
+    .entry .confirm-btn.confirmed:hover { background: #c62828; }
     .entry .comment-section {
       flex: 1 1 100%;
       margin-top: 6px;
@@ -282,17 +312,17 @@
   <!-- Панель авторизации -->
   <div class="auth-bar" id="authBar">
     <span class="user-info" id="userInfo">Не авторизован</span>
+    <span class="role-badge" id="roleBadge" style="display:none;"></span>
     <button id="loginGoogleBtn">Войти через Google</button>
-    <button id="loginAnonymousBtn">Войти анонимно</button>
     <button id="setNameBtn" class="set-name-btn" style="display:none;">Задать имя</button>
     <button id="logoutBtn">Выйти</button>
   </div>
 
   <div class="toolbar">
     <button id="refreshBtn">🔄 Обновить</button>
-    <button class="import-btn" id="importBtn">📂 Загрузить .wts</button>
+    <button class="import-btn" id="importBtn" style="display:none;">📂 Загрузить .wts</button>
     <input type="file" id="fileInput" accept=".wts">
-    <button class="export-btn" id="exportBtn">⬇ Скачать .wts</button>
+    <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts</button>
 
     <div class="filter-group">
       <label><input type="checkbox" id="filterOnlyRussian"> Только с русскими буквами</label>
@@ -369,8 +399,8 @@
 
   // Авторизация элементы
   const userInfo = document.getElementById('userInfo');
+  const roleBadge = document.getElementById('roleBadge');
   const loginGoogleBtn = document.getElementById('loginGoogleBtn');
-  const loginAnonymousBtn = document.getElementById('loginAnonymousBtn');
   const logoutBtn = document.getElementById('logoutBtn');
   const setNameBtn = document.getElementById('setNameBtn');
 
@@ -380,50 +410,95 @@
   let itemsPerPage = 25;
   let currentUser = null;
   let currentDisplayName = '';
+  let currentUserRole = 'translator';
 
   // ========== АВТОРИЗАЦИЯ ==========
 
-  // Обновление интерфейса пользователя
+  // Проверка поддержки окружения
+  function isAuthSupported() {
+    try {
+      localStorage.setItem('test', 'test');
+      localStorage.removeItem('test');
+      return window.location.protocol === 'http:' ||
+             window.location.protocol === 'https:' ||
+             window.location.protocol === 'chrome-extension:';
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Обновление интерфейса после получения пользователя
   function updateAuthUI(user) {
     if (user) {
       currentUser = user;
-      // Получаем отображаемое имя из базы или из профиля
       const uid = user.uid;
-      usersRef.child(uid).child('displayName').once('value', (snap) => {
-        let name = snap.val();
+      usersRef.child(uid).once('value', (snap) => {
+        const data = snap.val() || {};
+        let name = data.displayName;
+        let role = data.role || 'translator';
         if (!name) {
-          // Если нет в базе, используем displayName из профиля или генерируем
           name = user.displayName || 'Аноним';
-          // Сохраняем в базу
           usersRef.child(uid).update({ displayName: name });
         }
         currentDisplayName = name;
+        currentUserRole = role;
         userInfo.textContent = `👤 ${name} (${user.email || 'аноним'})`;
+        roleBadge.textContent = role === 'editor' ? 'Редактор' : 'Переводчик';
+        roleBadge.style.display = 'inline-block';
         setNameBtn.style.display = 'inline-block';
         loginGoogleBtn.style.display = 'none';
-        loginAnonymousBtn.style.display = 'none';
         logoutBtn.style.display = 'inline-block';
+
+        if (role === 'editor') {
+          importBtn.style.display = 'inline-block';
+          exportBtn.style.display = 'inline-block';
+        } else {
+          importBtn.style.display = 'none';
+          exportBtn.style.display = 'none';
+        }
+        render();
       });
     } else {
       currentUser = null;
       currentDisplayName = '';
+      currentUserRole = 'translator';
       userInfo.textContent = 'Не авторизован';
+      roleBadge.style.display = 'none';
       setNameBtn.style.display = 'none';
       loginGoogleBtn.style.display = 'inline-block';
-      loginAnonymousBtn.style.display = 'inline-block';
       logoutBtn.style.display = 'none';
+      importBtn.style.display = 'none';
+      exportBtn.style.display = 'none';
+      render();
     }
   }
 
-  // Вход через Google
-  loginGoogleBtn.addEventListener('click', () => {
-    const provider = new firebase.auth.GoogleAuthProvider();
-    auth.signInWithPopup(provider).catch(err => alert('Ошибка входа: ' + err.message));
-  });
+  // Обработка результата перенаправления (для Google)
+  function handleRedirectResult() {
+    auth.getRedirectResult()
+      .then((result) => {
+        if (result.user) {
+          // Вход выполнен, пользователь уже авторизован, onAuthStateChanged сработает
+        }
+      })
+      .catch((error) => {
+        if (error.code === 'auth/operation-not-supported-in-this-environment') {
+          alert('Ваш браузер или окружение не поддерживают авторизацию. Убедитесь, что вы используете HTTPS, и разрешите использование веб-хранилища.');
+        } else {
+          console.error('Ошибка при входе:', error);
+          alert('Ошибка входа: ' + error.message);
+        }
+      });
+  }
 
-  // Анонимный вход
-  loginAnonymousBtn.addEventListener('click', () => {
-    auth.signInAnonymously().catch(err => alert('Ошибка входа: ' + err.message));
+  // Вход через Google (с перенаправлением)
+  loginGoogleBtn.addEventListener('click', () => {
+    if (!isAuthSupported()) {
+      alert('Авторизация не поддерживается в текущем окружении. Используйте HTTPS.');
+      return;
+    }
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithRedirect(provider);
   });
 
   // Выход
@@ -431,7 +506,7 @@
     auth.signOut();
   });
 
-  // Установка имени (для анонимных пользователей)
+  // Установка имени
   setNameBtn.addEventListener('click', () => {
     if (!currentUser) return;
     const newName = prompt('Введите ваше отображаемое имя:', currentDisplayName);
@@ -446,20 +521,21 @@
     }
   });
 
-  // Отслеживание состояния авторизации
+  // Слушатель состояния авторизации
   auth.onAuthStateChanged(user => {
     updateAuthUI(user);
-    // Перерисовываем, чтобы обновить авторов
-    render();
   });
+
+  // При загрузке страницы проверяем результат перенаправления
+  handleRedirectResult();
 
   // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
   function getCurrentUserInfo() {
     if (currentUser) {
-      return { uid: currentUser.uid, displayName: currentDisplayName };
+      return { uid: currentUser.uid, displayName: currentDisplayName, role: currentUserRole };
     }
-    return { uid: null, displayName: 'Аноним' };
+    return { uid: null, displayName: 'Аноним', role: 'translator' };
   }
 
   function hasRussian(text) {
@@ -565,7 +641,6 @@
       }
       const pageItems = getPaginatedData(displayItems);
 
-      // Пагинация
       const curPageDisplay = totalDisplay === 0 ? 0 : currentPage + 1;
       pageInfo.textContent = totalDisplay === 0 ? '0 / 0' : `${curPageDisplay} / ${totalPages}`;
       pageInput.value = curPageDisplay;
@@ -573,7 +648,6 @@
       prevPageBtn.disabled = currentPage === 0 || totalDisplay === 0;
       nextPageBtn.disabled = currentPage >= totalPages - 1 || totalDisplay === 0;
 
-      // Статистика
       const totalAll = allData.length;
       const filteredCount = getFilteredData().length;
       statsSpan.textContent = `Всего: ${totalAll} | Отфильтровано: ${filteredCount} | Показано: ${totalDisplay}`;
@@ -585,6 +659,7 @@
       }
 
       let html = '';
+      const user = getCurrentUserInfo();
       for (const item of pageItems) {
         const key = item.key;
         const original = item.original || '';
@@ -594,6 +669,8 @@
         const commentAuthorName = item.commentAuthorName || '';
         const translationAuthor = item.translationAuthor || '';
         const translationAuthorName = item.translationAuthorName || '';
+        const confirmed = item.confirmed || false;
+        const confirmedByName = item.confirmedByName || '';
         const safeKey = key.replace(/"/g, '&quot;');
         let groupInfo = '';
         let groupClass = '';
@@ -604,24 +681,40 @@
           groupClass = 'group-header';
         }
 
-        // Автор перевода
         let translationAuthorDisplay = translationAuthorName ? `✍️ ${escapeHtml(translationAuthorName)}` : '';
-        // Автор комментария
-        let commentAuthorDisplay = commentAuthorName ? `💬 ${escapeHtml(commentAuthorName)}` : '';
+        let confirmedDisplay = '';
+        let confirmButton = '';
+        if (confirmed) {
+          confirmedDisplay = `<span class="confirmed-badge">✅ Подтверждено${confirmedByName ? ' (' + escapeHtml(confirmedByName) + ')' : ''}</span>`;
+        }
+        if (user.role === 'editor') {
+          const btnLabel = confirmed ? 'Отменить подтверждение' : 'Подтвердить';
+          const btnClass = confirmed ? 'confirm-btn confirmed' : 'confirm-btn';
+          confirmButton = `<button class="${btnClass}" data-key="${safeKey}">${btnLabel}</button>`;
+        }
+
+        let commentHtml = '';
+        if (comment) {
+          commentHtml = `<div class="comment-text">${escapeHtml(comment)}</div>`;
+          if (commentAuthorName) {
+            commentHtml += `<div class="comment-author">💬 ${escapeHtml(commentAuthorName)}</div>`;
+          }
+        }
 
         html += `
           <div class="entry ${groupClass}" data-key="${safeKey}" data-group='${JSON.stringify(item._groupMembers || [])}'>
             <span class="meta">#${key}</span>
-            ${comment ? `<span class="comment">${escapeHtml(comment)}</span>` : ''}
+            ${item.comment ? `<span class="comment">${escapeHtml(item.comment)}</span>` : ''}
             <div class="original">${escapeHtml(original)}</div>
             <input class="translation-input" type="text" value="${escapeHtml(translation)}" data-key="${safeKey}" placeholder="Введите перевод...">
             ${groupInfo ? `<span class="group-info">${groupInfo}</span>` : ''}
             <div class="author-info" style="flex:1 1 100%;">
               ${translationAuthorDisplay ? `<span>${translationAuthorDisplay}</span>` : ''}
+              ${confirmedDisplay}
+              ${confirmButton}
             </div>
             <div class="comment-section">
-              ${comment ? `<div class="comment-text">${escapeHtml(comment)}</div>` : ''}
-              ${commentAuthorDisplay ? `<div class="comment-author">${commentAuthorDisplay}</div>` : ''}
+              ${commentHtml}
               <input class="comment-input" type="text" placeholder="Оставить комментарий..." data-key="${safeKey}">
               <button class="comment-save-btn" data-key="${safeKey}">Сохранить комментарий</button>
             </div>
@@ -631,7 +724,6 @@
       container.innerHTML = html;
       countStatus.textContent = totalDisplay;
 
-      // Назначаем обработчики
       container.querySelectorAll('.translation-input').forEach(input => {
         input.removeEventListener('change', handleTranslationChange);
         input.addEventListener('change', handleTranslationChange);
@@ -641,13 +733,19 @@
         btn.removeEventListener('click', handleCommentSave);
         btn.addEventListener('click', handleCommentSave);
       });
+
+      container.querySelectorAll('.confirm-btn').forEach(btn => {
+        btn.removeEventListener('click', handleConfirmToggle);
+        btn.addEventListener('click', handleConfirmToggle);
+      });
     } catch (err) {
       console.error('Ошибка при рендеринге:', err);
       container.innerHTML = `<div class="loader" style="color:#c62828;">Ошибка отображения: ${err.message}</div>`;
     }
   }
 
-  // ========== ОБРАБОТЧИК ИЗМЕНЕНИЯ ПЕРЕВОДА ==========
+  // ========== ОБРАБОТЧИКИ ==========
+
   function handleTranslationChange(e) {
     const input = e.currentTarget;
     const key = input.dataset.key;
@@ -661,10 +759,8 @@
 
     const item = allData.find(d => d.key === key);
     if (!item) return;
+    const user = getCurrentUserInfo();
 
-    const userInfo = getCurrentUserInfo();
-
-    // Если режим группировки включён, обрабатываем группу
     if (groupMode.checked) {
       const pattern = makePattern(item.original);
       const members = allData.filter(m => makePattern(m.original) === pattern);
@@ -680,16 +776,15 @@
           const localItem = allData.find(d => d.key === member.key);
           if (localItem) {
             localItem.translation = memberTranslation;
-            localItem.translationAuthor = userInfo.uid;
-            localItem.translationAuthorName = userInfo.displayName;
+            localItem.translationAuthor = user.uid;
+            localItem.translationAuthorName = user.displayName;
           }
           updates[member.key] = {
             translation: memberTranslation,
-            translationAuthor: userInfo.uid,
-            translationAuthorName: userInfo.displayName
+            translationAuthor: user.uid,
+            translationAuthorName: user.displayName
           };
         }
-        // Отправляем в Firebase
         for (const [k, val] of Object.entries(updates)) {
           stringsRef.child(k).update(val)
             .catch(err => alert('Ошибка сохранения для #' + k + ': ' + err.message));
@@ -699,17 +794,15 @@
       }
     }
 
-    // Обычное сохранение
     const updateData = {
       translation: newTranslation,
-      translationAuthor: userInfo.uid,
-      translationAuthorName: userInfo.displayName
+      translationAuthor: user.uid,
+      translationAuthorName: user.displayName
     };
     stringsRef.child(key).update(updateData)
       .catch(err => alert('Ошибка сохранения: ' + err.message));
   }
 
-  // ========== ОБРАБОТЧИК СОХРАНЕНИЯ КОММЕНТАРИЯ ==========
   function handleCommentSave(e) {
     const btn = e.currentTarget;
     const key = btn.dataset.key;
@@ -721,25 +814,55 @@
       return;
     }
 
-    const userInfo = getCurrentUserInfo();
+    const user = getCurrentUserInfo();
     const updateData = {
       comment: commentText,
-      commentAuthor: userInfo.uid,
-      commentAuthorName: userInfo.displayName
+      commentAuthor: user.uid,
+      commentAuthorName: user.displayName
     };
 
     stringsRef.child(key).update(updateData)
       .then(() => {
-        // Обновляем локальные данные
         const item = allData.find(d => d.key === key);
         if (item) {
           item.comment = commentText;
-          item.commentAuthor = userInfo.uid;
-          item.commentAuthorName = userInfo.displayName;
+          item.commentAuthor = user.uid;
+          item.commentAuthorName = user.displayName;
         }
         render();
       })
       .catch(err => alert('Ошибка сохранения комментария: ' + err.message));
+  }
+
+  function handleConfirmToggle(e) {
+    const btn = e.currentTarget;
+    const key = btn.dataset.key;
+    const item = allData.find(d => d.key === key);
+    if (!item) return;
+
+    const user = getCurrentUserInfo();
+    if (user.role !== 'editor') {
+      alert('Только редакторы могут подтверждать переводы.');
+      return;
+    }
+
+    const newConfirmed = !item.confirmed;
+    const updateData = {
+      confirmed: newConfirmed,
+      confirmedBy: newConfirmed ? user.uid : null,
+      confirmedByName: newConfirmed ? user.displayName : null
+    };
+
+    stringsRef.child(key).update(updateData)
+      .then(() => {
+        if (item) {
+          item.confirmed = newConfirmed;
+          item.confirmedBy = newConfirmed ? user.uid : null;
+          item.confirmedByName = newConfirmed ? user.displayName : null;
+        }
+        render();
+      })
+      .catch(err => alert('Ошибка обновления подтверждения: ' + err.message));
   }
 
   // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В БАЗЕ ==========
@@ -759,7 +882,10 @@
       translationAuthorName: entry.translationAuthorName || '',
       comment: entry.comment || '',
       commentAuthor: entry.commentAuthor || '',
-      commentAuthorName: entry.commentAuthorName || ''
+      commentAuthorName: entry.commentAuthorName || '',
+      confirmed: entry.confirmed || false,
+      confirmedBy: entry.confirmedBy || '',
+      confirmedByName: entry.confirmedByName || ''
     }));
     render();
   });
@@ -798,7 +924,10 @@
             translationAuthorName: '',
             comment: '',
             commentAuthor: '',
-            commentAuthorName: ''
+            commentAuthorName: '',
+            confirmed: false,
+            confirmedBy: '',
+            confirmedByName: ''
           };
         }
         stringsRef.update(updates)
