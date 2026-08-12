@@ -317,13 +317,11 @@
     return matches ? matches.map(Number) : [];
   }
 
-  // Нормализуем строку: убираем лишние пробелы для сравнения шаблонов
   function normalizeText(str) {
     return str.replace(/\s+/g, ' ').trim();
   }
 
   function makePattern(str) {
-    // Сначала нормализуем, потом заменяем цифры на #
     return normalizeText(str).replace(/\d+/g, '#');
   }
 
@@ -465,7 +463,7 @@
     }
   }
 
-  // ========== ОБРАБОТЧИК ИЗМЕНЕНИЯ ПЕРЕВОДА ==========
+  // ========== ОБРАБОТЧИК ИЗМЕНЕНИЯ ПЕРЕВОДА (ИСПРАВЛЕННЫЙ) ==========
   function handleTranslationChange(e) {
     const input = e.currentTarget;
     const key = input.dataset.key;
@@ -480,36 +478,40 @@
     const item = allData.find(d => d.key === key);
     if (!item) return;
 
-    // Если режим группировки включён и у элемента есть группа (он представитель)
-    if (groupMode.checked && item._groupMembers && item._groupMembers.length > 1) {
-      const members = item._groupMembers;
-      console.log('Группа:', members.map(m => m.key));
-      const updates = {};
-      for (const member of members) {
-        let memberTranslation;
-        if (member.key === key) {
-          memberTranslation = newTranslation;
-        } else {
-          memberTranslation = applyTranslationToMember(newTranslation, member.original);
+    // Если режим группировки включён, вычисляем группу по шаблону
+    if (groupMode.checked) {
+      const pattern = makePattern(item.original);
+      const members = allData.filter(m => makePattern(m.original) === pattern);
+      if (members.length > 1) {
+        console.log(`Группа для #${key}:`, members.map(m => m.key));
+        const updates = {};
+        for (const member of members) {
+          let memberTranslation;
+          if (member.key === key) {
+            memberTranslation = newTranslation;
+          } else {
+            memberTranslation = applyTranslationToMember(newTranslation, member.original);
+          }
+          const localItem = allData.find(d => d.key === member.key);
+          if (localItem) localItem.translation = memberTranslation;
+          updates[member.key] = memberTranslation;
+          console.log(`#${member.key} → ${memberTranslation}`);
         }
-        const localItem = allData.find(d => d.key === member.key);
-        if (localItem) localItem.translation = memberTranslation;
-        updates[member.key] = memberTranslation;
-        console.log(`#${member.key}: ${memberTranslation}`);
+        // Отправляем в Firebase
+        for (const [k, val] of Object.entries(updates)) {
+          stringsRef.child(k).update({ translation: val })
+            .then(() => console.log(`#${k} сохранено`))
+            .catch(err => alert('Ошибка сохранения для #' + k + ': ' + err.message));
+        }
+        render();
+        return;
       }
-      // Отправляем в Firebase
-      for (const [k, val] of Object.entries(updates)) {
-        stringsRef.child(k).update({ translation: val })
-          .then(() => console.log(`#${k} сохранено`))
-          .catch(err => alert('Ошибка сохранения для #' + k + ': ' + err.message));
-      }
-      render();
-    } else {
-      // Обычное сохранение
-      stringsRef.child(key).update({ translation: newTranslation })
-        .then(() => console.log(`#${key} сохранено`))
-        .catch(err => alert('Ошибка сохранения: ' + err.message));
     }
+
+    // Обычное сохранение для одной записи (если группа не найдена или режим выключен)
+    stringsRef.child(key).update({ translation: newTranslation })
+      .then(() => console.log(`#${key} сохранено`))
+      .catch(err => alert('Ошибка сохранения: ' + err.message));
   }
 
   // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В БАЗЕ ==========
