@@ -1,10 +1,9 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Перевод .wts – совместный словарь</title>
-  <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <style>
@@ -17,7 +16,7 @@
       justify-content: center;
     }
     .app {
-      max-width: 900px;
+      max-width: 1000px;
       width: 100%;
       background: white;
       padding: 24px;
@@ -27,38 +26,103 @@
     h1 { text-align: center; color: #1a237e; margin-bottom: 20px; }
     .toolbar {
       display: flex;
-      gap: 12px;
       flex-wrap: wrap;
-      margin-bottom: 20px;
+      gap: 12px;
+      margin-bottom: 16px;
       align-items: center;
     }
     .toolbar button {
-      padding: 8px 20px;
+      padding: 8px 16px;
       border: none;
       border-radius: 8px;
-      font-size: 15px;
+      font-size: 14px;
       cursor: pointer;
       background: #0d47a1;
       color: white;
       transition: 0.2s;
+      font-weight: 500;
     }
     .toolbar button:hover { background: #1565c0; }
     .toolbar .export-btn { background: #2e7d32; }
     .toolbar .export-btn:hover { background: #388e3c; }
-    .toolbar .import-label {
-      background: #e65100;
-      color: white;
-      padding: 8px 20px;
-      border-radius: 8px;
-      cursor: pointer;
-      display: inline-block;
-    }
-    .toolbar .import-label:hover { background: #bf360c; }
+    .toolbar .import-btn { background: #e65100; }
+    .toolbar .import-btn:hover { background: #bf360c; }
     #fileInput { display: none; }
-    .stats {
+    .filter-group {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: #f5f5f5;
+      padding: 4px 14px;
+      border-radius: 20px;
+      font-size: 14px;
+      flex-wrap: wrap;
+    }
+    .filter-group label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+    }
+    .filter-group input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
       margin-left: auto;
+    }
+    .pagination select {
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+    }
+    .pagination span {
+      font-size: 14px;
+      color: #333;
+    }
+    .pagination button {
+      padding: 4px 12px;
+      background: #e0e0e0;
+      color: #333;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .pagination button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .pagination button:hover:not(:disabled) { background: #bdbdbd; }
+    .pagination input[type="number"] {
+      width: 60px;
+      padding: 4px 6px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+      text-align: center;
+    }
+    .pagination .goto-btn {
+      background: #0d47a1;
+      color: white;
+      padding: 4px 12px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .pagination .goto-btn:hover { background: #1565c0; }
+    .stats {
       font-size: 14px;
       color: #555;
+      font-weight: 500;
+      white-space: nowrap;
     }
     .entry {
       display: flex;
@@ -70,6 +134,10 @@
       border-radius: 8px;
       border-left: 4px solid #0d47a1;
       margin-bottom: 8px;
+    }
+    .entry.group-header {
+      border-left-color: #e65100;
+      background: #fff8e1;
     }
     .entry .meta {
       font-size: 13px;
@@ -103,19 +171,20 @@
       border-color: #0d47a1;
       outline: none;
     }
-    .entry .delete-btn {
-      background: #e53935;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      padding: 4px 12px;
-      cursor: pointer;
+    .entry .group-info {
       font-size: 13px;
+      color: #e65100;
+      background: #fff3e0;
+      padding: 2px 10px;
+      border-radius: 12px;
+      margin-left: auto;
     }
-    .entry .delete-btn:hover { background: #c62828; }
     .dictionary {
       max-height: 600px;
       overflow-y: auto;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 4px 0;
     }
     .loader {
       text-align: center;
@@ -132,7 +201,6 @@
       justify-content: space-between;
     }
     .status .online { color: #2e7d32; font-weight: 600; }
-    .error-message { color: #c62828; }
   </style>
 </head>
 <body>
@@ -141,9 +209,31 @@
 
   <div class="toolbar">
     <button id="refreshBtn">🔄 Обновить</button>
-    <label class="import-label" id="importLabel">📂 Загрузить .wts</label>
-    <input type="file" id="fileInput" accept=".wts" />
+    <button class="import-btn" id="importBtn">📂 Загрузить .wts</button>
+    <input type="file" id="fileInput" accept=".wts">
     <button class="export-btn" id="exportBtn">⬇ Скачать .wts</button>
+
+    <div class="filter-group">
+      <label><input type="checkbox" id="filterOnlyRussian"> Только с русскими буквами</label>
+      <label><input type="checkbox" id="filterNoTranslation"> Без перевода</label>
+      <label><input type="checkbox" id="filterHideEditorSuffix"> Скрыть с EditorSuffix</label>
+      <label><input type="checkbox" id="groupMode"> Группировать по шаблону</label>
+    </div>
+
+    <div class="pagination">
+      <button id="prevPage" disabled>◀</button>
+      <span id="pageInfo">1 / 1</span>
+      <button id="nextPage" disabled>▶</button>
+      <input type="number" id="pageInput" min="1" value="1">
+      <button class="goto-btn" id="gotoPage">Перейти</button>
+      <select id="perPage">
+        <option value="10">10</option>
+        <option value="25" selected>25</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+        <option value="0">Все</option>
+      </select>
+    </div>
     <span class="stats" id="stats">Записей: 0</span>
   </div>
 
@@ -158,7 +248,7 @@
 </div>
 
 <script>
-  // ============ КОНФИГУРАЦИЯ FIREBASE (ЗАМЕНИТЕ) ============
+  // ============ КОНФИГУРАЦИЯ FIREBASE ============
   const firebaseConfig = {
     apiKey: "AIzaSyATbe93bnOiAQmdTUX1dh22UXwtA_dbMWI",
     authDomain: "translatorapp-6fd48.firebaseapp.com",
@@ -168,7 +258,7 @@
     messagingSenderId: "428558181807",
     appId: "1:428558181807:web:b891cd4d29c8b985eebb5a"
   };
-  // =============================================================
+  // =================================================
 
   firebase.initializeApp(firebaseConfig);
   const db = firebase.database();
@@ -180,10 +270,26 @@
   const countStatus = document.getElementById('countStatus');
   const connectionStatus = document.getElementById('connectionStatus');
   const fileInput = document.getElementById('fileInput');
+  const importBtn = document.getElementById('importBtn');
   const exportBtn = document.getElementById('exportBtn');
   const refreshBtn = document.getElementById('refreshBtn');
+  const filterOnlyRussian = document.getElementById('filterOnlyRussian');
+  const filterNoTranslation = document.getElementById('filterNoTranslation');
+  const filterHideEditorSuffix = document.getElementById('filterHideEditorSuffix');
+  const groupMode = document.getElementById('groupMode');
+  const perPageSelect = document.getElementById('perPage');
+  const prevPageBtn = document.getElementById('prevPage');
+  const nextPageBtn = document.getElementById('nextPage');
+  const pageInfo = document.getElementById('pageInfo');
+  const pageInput = document.getElementById('pageInput');
+  const gotoPageBtn = document.getElementById('gotoPage');
 
-  // Состояние подключения
+  // Состояние
+  let allData = [];
+  let currentPage = 0;
+  let itemsPerPage = 25;
+
+  // Подключение
   const connectedRef = firebase.database().ref('.info/connected');
   connectedRef.on('value', (snap) => {
     if (snap.val()) {
@@ -195,75 +301,237 @@
     }
   });
 
-  // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В РЕАЛЬНОМ ВРЕМЕНИ ==========
+  // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+  function hasRussian(text) {
+    return /[а-яё]/i.test(text);
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  function extractNumbers(str) {
+    const matches = str.match(/\d+/g);
+    return matches ? matches.map(Number) : [];
+  }
+
+  // Нормализуем строку: убираем лишние пробелы для сравнения шаблонов
+  function normalizeText(str) {
+    return str.replace(/\s+/g, ' ').trim();
+  }
+
+  function makePattern(str) {
+    // Сначала нормализуем, потом заменяем цифры на #
+    return normalizeText(str).replace(/\d+/g, '#');
+  }
+
+  function applyTranslationToMember(templateTranslation, original) {
+    const numbers = extractNumbers(original);
+    let index = 0;
+    return templateTranslation.replace(/\d+/g, function(match) {
+      if (index < numbers.length) {
+        return numbers[index++];
+      }
+      return match;
+    });
+  }
+
+  // ========== ПОСТРОЕНИЕ ГРУПП ==========
+  function buildGroups(dataArray) {
+    const map = new Map();
+    for (const item of dataArray) {
+      const pattern = makePattern(item.original);
+      if (!map.has(pattern)) map.set(pattern, []);
+      map.get(pattern).push(item);
+    }
+    const groups = [];
+    for (const [pattern, members] of map) {
+      members.sort((a, b) => parseInt(a.key) - parseInt(b.key));
+      groups.push({ pattern, members });
+    }
+    groups.sort((a, b) => parseInt(a.members[0].key) - parseInt(b.members[0].key));
+    return groups;
+  }
+
+  // ========== ЛОГИКА ФИЛЬТРАЦИИ ==========
+  function getFilteredData() {
+    let filtered = allData;
+    if (filterOnlyRussian.checked) {
+      filtered = filtered.filter(item => hasRussian(item.original));
+    }
+    if (filterNoTranslation.checked) {
+      filtered = filtered.filter(item => item.translation.trim() === '');
+    }
+    if (filterHideEditorSuffix.checked) {
+      filtered = filtered.filter(item => {
+        const comment = item.comment || '';
+        return !comment.toLowerCase().includes('editorsuffix');
+      });
+    }
+    return filtered;
+  }
+
+  // ========== ПОЛУЧЕНИЕ ЭЛЕМЕНТОВ ДЛЯ ОТОБРАЖЕНИЯ ==========
+  function getDisplayItems() {
+    const filtered = getFilteredData();
+    if (!groupMode.checked) {
+      return filtered;
+    } else {
+      const groups = buildGroups(filtered);
+      return groups.map(group => {
+        const rep = { ...group.members[0] };
+        rep._groupMembers = group.members;
+        return rep;
+      });
+    }
+  }
+
+  function getPaginatedData(items) {
+    if (itemsPerPage === 0) return items;
+    const start = currentPage * itemsPerPage;
+    return items.slice(start, start + itemsPerPage);
+  }
+
+  // ========== ОСНОВНАЯ ФУНКЦИЯ ОТРИСОВКИ ==========
+  function render() {
+    try {
+      const displayItems = getDisplayItems();
+      const totalDisplay = displayItems.length;
+      const totalPages = itemsPerPage === 0 ? 1 : Math.ceil(totalDisplay / itemsPerPage);
+      if (totalDisplay === 0) {
+        currentPage = 0;
+      } else if (currentPage >= totalPages) {
+        currentPage = totalPages - 1;
+      }
+      const pageItems = getPaginatedData(displayItems);
+
+      // Пагинация
+      const curPageDisplay = totalDisplay === 0 ? 0 : currentPage + 1;
+      pageInfo.textContent = totalDisplay === 0 ? '0 / 0' : `${curPageDisplay} / ${totalPages}`;
+      pageInput.value = curPageDisplay;
+      pageInput.max = totalPages;
+      prevPageBtn.disabled = currentPage === 0 || totalDisplay === 0;
+      nextPageBtn.disabled = currentPage >= totalPages - 1 || totalDisplay === 0;
+
+      // Статистика
+      const totalAll = allData.length;
+      const filteredCount = getFilteredData().length;
+      statsSpan.textContent = `Всего: ${totalAll} | Отфильтровано: ${filteredCount} | Показано: ${totalDisplay}`;
+
+      if (totalDisplay === 0) {
+        container.innerHTML = '<div class="loader">Нет записей, соответствующих фильтрам.</div>';
+        countStatus.textContent = '0';
+        return;
+      }
+
+      let html = '';
+      for (const item of pageItems) {
+        const key = item.key;
+        const original = item.original || '';
+        const translation = item.translation || '';
+        const comment = item.comment || '';
+        const safeKey = key.replace(/"/g, '&quot;');
+        let groupInfo = '';
+        let groupClass = '';
+        if (groupMode.checked && item._groupMembers && item._groupMembers.length > 1) {
+          const members = item._groupMembers;
+          const keys = members.map(m => m.key).join(', ');
+          groupInfo = `Группа (${members.length} шт: #${keys})`;
+          groupClass = 'group-header';
+        }
+        html += `
+          <div class="entry ${groupClass}" data-key="${safeKey}" data-group='${JSON.stringify(item._groupMembers || [])}'>
+            <span class="meta">#${key}</span>
+            ${comment ? `<span class="comment">${escapeHtml(comment)}</span>` : ''}
+            <div class="original">${escapeHtml(original)}</div>
+            <input class="translation-input" type="text" value="${escapeHtml(translation)}" data-key="${safeKey}" placeholder="Введите перевод...">
+            ${groupInfo ? `<span class="group-info">${groupInfo}</span>` : ''}
+          </div>
+        `;
+      }
+      container.innerHTML = html;
+      countStatus.textContent = totalDisplay;
+
+      // Назначаем обработчики
+      container.querySelectorAll('.translation-input').forEach(input => {
+        input.removeEventListener('change', handleTranslationChange);
+        input.addEventListener('change', handleTranslationChange);
+      });
+    } catch (err) {
+      console.error('Ошибка при рендеринге:', err);
+      container.innerHTML = `<div class="loader" style="color:#c62828;">Ошибка отображения: ${err.message}</div>`;
+    }
+  }
+
+  // ========== ОБРАБОТЧИК ИЗМЕНЕНИЯ ПЕРЕВОДА ==========
+  function handleTranslationChange(e) {
+    const input = e.currentTarget;
+    const key = input.dataset.key;
+    const newTranslation = input.value.trim();
+    if (newTranslation === '') {
+      alert('Перевод не может быть пустым.');
+      const originalItem = allData.find(d => d.key === key);
+      input.value = originalItem?.translation || '';
+      return;
+    }
+
+    const item = allData.find(d => d.key === key);
+    if (!item) return;
+
+    // Если режим группировки включён и у элемента есть группа (он представитель)
+    if (groupMode.checked && item._groupMembers && item._groupMembers.length > 1) {
+      const members = item._groupMembers;
+      console.log('Группа:', members.map(m => m.key));
+      const updates = {};
+      for (const member of members) {
+        let memberTranslation;
+        if (member.key === key) {
+          memberTranslation = newTranslation;
+        } else {
+          memberTranslation = applyTranslationToMember(newTranslation, member.original);
+        }
+        const localItem = allData.find(d => d.key === member.key);
+        if (localItem) localItem.translation = memberTranslation;
+        updates[member.key] = memberTranslation;
+        console.log(`#${member.key}: ${memberTranslation}`);
+      }
+      // Отправляем в Firebase
+      for (const [k, val] of Object.entries(updates)) {
+        stringsRef.child(k).update({ translation: val })
+          .then(() => console.log(`#${k} сохранено`))
+          .catch(err => alert('Ошибка сохранения для #' + k + ': ' + err.message));
+      }
+      render();
+    } else {
+      // Обычное сохранение
+      stringsRef.child(key).update({ translation: newTranslation })
+        .then(() => console.log(`#${key} сохранено`))
+        .catch(err => alert('Ошибка сохранения: ' + err.message));
+    }
+  }
+
+  // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В БАЗЕ ==========
   stringsRef.on('value', (snapshot) => {
     const data = snapshot.val();
     if (!data) {
-      container.innerHTML = '<div class="loader">Словарь пуст. Загрузите .wts или добавьте вручную.</div>';
-      statsSpan.textContent = 'Записей: 0';
-      countStatus.textContent = '0';
+      allData = [];
+      render();
       return;
     }
-    // Преобразуем объект в массив и сортируем по номеру (ключу)
     const entries = Object.entries(data).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
-    statsSpan.textContent = `Записей: ${entries.length}`;
-    countStatus.textContent = entries.length;
-
-    let html = '';
-    for (const [key, entry] of entries) {
-      const original = entry.original || '';
-      const translation = entry.translation || '';
-      const comment = entry.comment || '';
-      const safeKey = key.replace(/"/g, '&quot;');
-      html += `
-        <div class="entry" data-key="${safeKey}">
-          <span class="meta">#${key}</span>
-          ${comment ? `<span class="comment">${escapeHtml(comment)}</span>` : ''}
-          <div class="original">${escapeHtml(original)}</div>
-          <input class="translation-input" type="text" value="${escapeHtml(translation)}" data-key="${safeKey}" placeholder="Введите перевод...">
-          <button class="delete-btn" data-key="${safeKey}">✕</button>
-        </div>
-      `;
-    }
-    container.innerHTML = html;
-
-    // Обработчики изменения перевода (сохранение в Firebase)
-    container.querySelectorAll('.translation-input').forEach(input => {
-      const key = input.dataset.key;
-      input.addEventListener('change', function(e) {
-        const newTranslation = e.target.value.trim();
-        if (newTranslation === '') {
-          alert('Перевод не может быть пустым. Чтобы удалить запись, используйте кнопку ✕.');
-          e.target.value = data[key]?.translation || '';
-          return;
-        }
-        // Обновляем только поле translation
-        stringsRef.child(key).update({ translation: newTranslation })
-          .catch(err => alert('Ошибка сохранения: ' + err.message));
-      });
-      // Также сохраняем при потере фокуса (если не изменилось, ничего не делаем)
-      input.addEventListener('blur', function(e) {
-        // Уже обработано change
-      });
-    });
-
-    // Обработчики удаления
-    container.querySelectorAll('.delete-btn').forEach(btn => {
-      const key = btn.dataset.key;
-      btn.addEventListener('click', function() {
-        if (confirm(`Удалить строку #${key}?`)) {
-          stringsRef.child(key).remove()
-            .catch(err => alert('Ошибка удаления: ' + err.message));
-        }
-      });
-    });
+    allData = entries.map(([key, entry]) => ({
+      key,
+      original: entry.original || '',
+      translation: entry.translation || '',
+      comment: entry.comment || ''
+    }));
+    render();
   });
 
-  // ========== ИМПОРТ .WTS ==========
+  // ========== ИМПОРТ / ЭКСПОРТ ==========
   function parseWTS(text) {
-    // Регулярное выражение для поиска блоков:
-    // STRING номер [ // комментарий ] \n? { текст }
-    // Комментарий может отсутствовать.
     const regex = /STRING\s+(\d+)\s*(?:\/\/\s*([^\n]*))?\s*\{([\s\S]*?)\}/g;
     const entries = [];
     let match;
@@ -271,7 +539,7 @@
       const number = match[1];
       const comment = (match[2] || '').trim();
       const content = match[3].trim();
-      entries.push({ number, comment, content });
+      if (content) entries.push({ number, comment, content });
     }
     return entries;
   }
@@ -279,60 +547,50 @@
   function importWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
-      const text = e.target.result;
-      const parsed = parseWTS(text);
-      if (parsed.length === 0) {
-        alert('Не удалось найти ни одной строки STRING в файле. Проверьте формат.');
-        return;
+      try {
+        const text = e.target.result;
+        const parsed = parseWTS(text);
+        if (parsed.length === 0) {
+          alert('Не удалось найти ни одной строки STRING в файле.');
+          return;
+        }
+        if (!confirm(`Найдено ${parsed.length} строк. Импортировать?`)) return;
+        const updates = {};
+        for (const item of parsed) {
+          updates[item.number] = {
+            original: item.content,
+            translation: '',
+            comment: item.comment
+          };
+        }
+        stringsRef.update(updates)
+          .then(() => alert(`Импортировано ${parsed.length} строк.`))
+          .catch(err => alert('Ошибка импорта: ' + err.message));
+      } catch (err) {
+        alert('Ошибка при обработке файла: ' + err.message);
       }
-      // Подтверждение перед импортом (перезапишет существующие строки с такими номерами)
-      if (!confirm(`Найдено ${parsed.length} строк. Импортировать? (строки с существующими номерами будут перезаписаны)`)) return;
-
-      // Загружаем все в Firebase (обновляем)
-      const updates = {};
-      for (const item of parsed) {
-        updates[item.number] = {
-          original: item.content,
-          translation: '',
-          comment: item.comment
-        };
-      }
-      stringsRef.update(updates)
-        .then(() => {
-          alert(`Импортировано ${parsed.length} строк.`);
-        })
-        .catch(err => alert('Ошибка импорта: ' + err.message));
     };
-    reader.onerror = function() {
-      alert('Ошибка чтения файла');
-    };
+    reader.onerror = () => alert('Ошибка чтения файла');
     reader.readAsText(file, 'UTF-8');
   }
 
+  importBtn.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', function(e) {
-    if (this.files && this.files[0]) {
-      importWTS(this.files[0]);
-    }
-    this.value = ''; // сброс, чтобы можно было загрузить тот же файл повторно
+    if (this.files && this.files[0]) importWTS(this.files[0]);
+    this.value = '';
   });
 
-  // ========== ЭКСПОРТ .WTS ==========
   function generateWTS(data) {
-    // data – объект { номер: { original, translation, comment } }
     const keys = Object.keys(data).sort((a, b) => parseInt(a) - parseInt(b));
     let output = '';
     for (const key of keys) {
       const entry = data[key];
       const original = entry.original || '';
       const translation = entry.translation || '';
-      // При экспорте мы пишем переведённый текст (если есть), иначе оригинал.
-      // По логике, пользователь хочет получить .wts с переведёнными строками, поэтому используем translation, если он не пуст.
       const textToWrite = translation.trim() !== '' ? translation : original;
       const comment = entry.comment || '';
       output += `STRING ${key}`;
-      if (comment) {
-        output += ` // ${comment}`;
-      }
+      if (comment) output += ` // ${comment}`;
       output += `\n{\n${textToWrite}\n}\n\n`;
     }
     return output;
@@ -346,7 +604,6 @@
         return;
       }
       const wtsText = generateWTS(data);
-      // Создаём файл для скачивания
       const blob = new Blob([wtsText], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -361,24 +618,54 @@
 
   exportBtn.addEventListener('click', exportWTS);
 
-  // ========== ОБНОВИТЬ (рефреш) ==========
-  refreshBtn.addEventListener('click', () => {
-    stringsRef.once('value', (snap) => {
-      const data = snap.val();
-      const count = data ? Object.keys(data).length : 0;
-      countStatus.textContent = count;
-    });
-  });
-
-  // ========== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ==========
-  function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+  // ========== УПРАВЛЕНИЕ ПАГИНАЦИЕЙ ==========
+  function goToPage(page) {
+    const displayItems = getDisplayItems();
+    const totalPages = itemsPerPage === 0 ? 1 : Math.ceil(displayItems.length / itemsPerPage);
+    if (totalPages === 0) {
+      currentPage = 0;
+    } else {
+      if (page < 0) page = 0;
+      if (page >= totalPages) page = totalPages - 1;
+      currentPage = page;
+    }
+    render();
   }
 
-  // ========== ИНИЦИАЛИЗАЦИЯ ==========
-  // При первом запуске, если база пуста, можно ничего не делать.
+  prevPageBtn.addEventListener('click', () => goToPage(currentPage - 1));
+  nextPageBtn.addEventListener('click', () => goToPage(currentPage + 1));
+
+  perPageSelect.addEventListener('change', function() {
+    itemsPerPage = parseInt(this.value, 10);
+    currentPage = 0;
+    render();
+  });
+
+  function handleGoto() {
+    let page = parseInt(pageInput.value, 10);
+    if (isNaN(page) || page < 1) page = 1;
+    const displayItems = getDisplayItems();
+    const totalPages = itemsPerPage === 0 ? 1 : Math.ceil(displayItems.length / itemsPerPage);
+    if (totalPages === 0) page = 1;
+    if (page > totalPages) page = totalPages;
+    goToPage(page - 1);
+  }
+
+  gotoPageBtn.addEventListener('click', handleGoto);
+  pageInput.addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') handleGoto();
+  });
+
+  // Фильтры
+  filterOnlyRussian.addEventListener('change', () => { currentPage = 0; render(); });
+  filterNoTranslation.addEventListener('change', () => { currentPage = 0; render(); });
+  filterHideEditorSuffix.addEventListener('change', () => { currentPage = 0; render(); });
+  groupMode.addEventListener('change', () => { currentPage = 0; render(); });
+
+  refreshBtn.addEventListener('click', () => {
+    stringsRef.once('value', () => render());
+  });
+
   console.log('Приложение готово.');
 </script>
 </body>
