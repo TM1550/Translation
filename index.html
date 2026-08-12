@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Перевод .wts – совместный словарь</title>
+  <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -24,6 +26,34 @@
       box-shadow: 0 8px 24px rgba(0,0,0,0.1);
     }
     h1 { text-align: center; color: #1a237e; margin-bottom: 20px; }
+    .auth-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+      padding: 8px 14px;
+      background: #e8eaf6;
+      border-radius: 8px;
+    }
+    .auth-bar button {
+      padding: 6px 16px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      background: #1a237e;
+      color: white;
+    }
+    .auth-bar button:hover { background: #0d47a1; }
+    .auth-bar .user-info {
+      font-weight: 500;
+      margin-right: auto;
+    }
+    .auth-bar .set-name-btn {
+      background: #2e7d32;
+    }
+    .auth-bar .set-name-btn:hover { background: #1b5e20; }
     .toolbar {
       display: flex;
       flex-wrap: wrap;
@@ -179,6 +209,48 @@
       border-radius: 12px;
       margin-left: auto;
     }
+    .entry .author-info {
+      font-size: 12px;
+      color: #666;
+      margin: 2px 0;
+    }
+    .entry .comment-section {
+      flex: 1 1 100%;
+      margin-top: 6px;
+      padding-top: 8px;
+      border-top: 1px dashed #ccc;
+    }
+    .entry .comment-section .comment-text {
+      font-size: 14px;
+      background: #fffde7;
+      padding: 6px 10px;
+      border-radius: 6px;
+      margin-bottom: 4px;
+      white-space: pre-wrap;
+    }
+    .entry .comment-section .comment-author {
+      font-size: 12px;
+      color: #666;
+    }
+    .entry .comment-section .comment-input {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid #cfd8dc;
+      border-radius: 6px;
+      font-size: 14px;
+      margin-top: 4px;
+    }
+    .entry .comment-section .comment-save-btn {
+      background: #0d47a1;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 4px 12px;
+      cursor: pointer;
+      font-size: 13px;
+      margin-top: 4px;
+    }
+    .entry .comment-section .comment-save-btn:hover { background: #1565c0; }
     .dictionary {
       max-height: 600px;
       overflow-y: auto;
@@ -206,6 +278,15 @@
 <body>
 <div class="app">
   <h1>📚 Перевод .wts – совместная работа</h1>
+
+  <!-- Панель авторизации -->
+  <div class="auth-bar" id="authBar">
+    <span class="user-info" id="userInfo">Не авторизован</span>
+    <button id="loginGoogleBtn">Войти через Google</button>
+    <button id="loginAnonymousBtn">Войти анонимно</button>
+    <button id="setNameBtn" class="set-name-btn" style="display:none;">Задать имя</button>
+    <button id="logoutBtn">Выйти</button>
+  </div>
 
   <div class="toolbar">
     <button id="refreshBtn">🔄 Обновить</button>
@@ -262,7 +343,9 @@
 
   firebase.initializeApp(firebaseConfig);
   const db = firebase.database();
+  const auth = firebase.auth();
   const stringsRef = db.ref('strings');
+  const usersRef = db.ref('users');
 
   // DOM элементы
   const container = document.getElementById('dictionaryContainer');
@@ -284,24 +367,101 @@
   const pageInput = document.getElementById('pageInput');
   const gotoPageBtn = document.getElementById('gotoPage');
 
+  // Авторизация элементы
+  const userInfo = document.getElementById('userInfo');
+  const loginGoogleBtn = document.getElementById('loginGoogleBtn');
+  const loginAnonymousBtn = document.getElementById('loginAnonymousBtn');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const setNameBtn = document.getElementById('setNameBtn');
+
   // Состояние
   let allData = [];
   let currentPage = 0;
   let itemsPerPage = 25;
+  let currentUser = null;
+  let currentDisplayName = '';
 
-  // Подключение
-  const connectedRef = firebase.database().ref('.info/connected');
-  connectedRef.on('value', (snap) => {
-    if (snap.val()) {
-      connectionStatus.innerHTML = '✅ Подключено к Firebase';
-      connectionStatus.style.color = '#2e7d32';
+  // ========== АВТОРИЗАЦИЯ ==========
+
+  // Обновление интерфейса пользователя
+  function updateAuthUI(user) {
+    if (user) {
+      currentUser = user;
+      // Получаем отображаемое имя из базы или из профиля
+      const uid = user.uid;
+      usersRef.child(uid).child('displayName').once('value', (snap) => {
+        let name = snap.val();
+        if (!name) {
+          // Если нет в базе, используем displayName из профиля или генерируем
+          name = user.displayName || 'Аноним';
+          // Сохраняем в базу
+          usersRef.child(uid).update({ displayName: name });
+        }
+        currentDisplayName = name;
+        userInfo.textContent = `👤 ${name} (${user.email || 'аноним'})`;
+        setNameBtn.style.display = 'inline-block';
+        loginGoogleBtn.style.display = 'none';
+        loginAnonymousBtn.style.display = 'none';
+        logoutBtn.style.display = 'inline-block';
+      });
     } else {
-      connectionStatus.innerHTML = '❌ Офлайн (изменения сохранятся позже)';
-      connectionStatus.style.color = '#e53935';
+      currentUser = null;
+      currentDisplayName = '';
+      userInfo.textContent = 'Не авторизован';
+      setNameBtn.style.display = 'none';
+      loginGoogleBtn.style.display = 'inline-block';
+      loginAnonymousBtn.style.display = 'inline-block';
+      logoutBtn.style.display = 'none';
+    }
+  }
+
+  // Вход через Google
+  loginGoogleBtn.addEventListener('click', () => {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(err => alert('Ошибка входа: ' + err.message));
+  });
+
+  // Анонимный вход
+  loginAnonymousBtn.addEventListener('click', () => {
+    auth.signInAnonymously().catch(err => alert('Ошибка входа: ' + err.message));
+  });
+
+  // Выход
+  logoutBtn.addEventListener('click', () => {
+    auth.signOut();
+  });
+
+  // Установка имени (для анонимных пользователей)
+  setNameBtn.addEventListener('click', () => {
+    if (!currentUser) return;
+    const newName = prompt('Введите ваше отображаемое имя:', currentDisplayName);
+    if (newName && newName.trim() !== '') {
+      const name = newName.trim();
+      usersRef.child(currentUser.uid).update({ displayName: name })
+        .then(() => {
+          currentDisplayName = name;
+          userInfo.textContent = `👤 ${name} (${currentUser.email || 'аноним'})`;
+        })
+        .catch(err => alert('Ошибка сохранения имени: ' + err.message));
     }
   });
 
+  // Отслеживание состояния авторизации
+  auth.onAuthStateChanged(user => {
+    updateAuthUI(user);
+    // Перерисовываем, чтобы обновить авторов
+    render();
+  });
+
   // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+
+  function getCurrentUserInfo() {
+    if (currentUser) {
+      return { uid: currentUser.uid, displayName: currentDisplayName };
+    }
+    return { uid: null, displayName: 'Аноним' };
+  }
+
   function hasRussian(text) {
     return /[а-яё]/i.test(text);
   }
@@ -430,6 +590,10 @@
         const original = item.original || '';
         const translation = item.translation || '';
         const comment = item.comment || '';
+        const commentAuthor = item.commentAuthor || '';
+        const commentAuthorName = item.commentAuthorName || '';
+        const translationAuthor = item.translationAuthor || '';
+        const translationAuthorName = item.translationAuthorName || '';
         const safeKey = key.replace(/"/g, '&quot;');
         let groupInfo = '';
         let groupClass = '';
@@ -439,6 +603,12 @@
           groupInfo = `Группа (${members.length} шт: #${keys})`;
           groupClass = 'group-header';
         }
+
+        // Автор перевода
+        let translationAuthorDisplay = translationAuthorName ? `✍️ ${escapeHtml(translationAuthorName)}` : '';
+        // Автор комментария
+        let commentAuthorDisplay = commentAuthorName ? `💬 ${escapeHtml(commentAuthorName)}` : '';
+
         html += `
           <div class="entry ${groupClass}" data-key="${safeKey}" data-group='${JSON.stringify(item._groupMembers || [])}'>
             <span class="meta">#${key}</span>
@@ -446,6 +616,15 @@
             <div class="original">${escapeHtml(original)}</div>
             <input class="translation-input" type="text" value="${escapeHtml(translation)}" data-key="${safeKey}" placeholder="Введите перевод...">
             ${groupInfo ? `<span class="group-info">${groupInfo}</span>` : ''}
+            <div class="author-info" style="flex:1 1 100%;">
+              ${translationAuthorDisplay ? `<span>${translationAuthorDisplay}</span>` : ''}
+            </div>
+            <div class="comment-section">
+              ${comment ? `<div class="comment-text">${escapeHtml(comment)}</div>` : ''}
+              ${commentAuthorDisplay ? `<div class="comment-author">${commentAuthorDisplay}</div>` : ''}
+              <input class="comment-input" type="text" placeholder="Оставить комментарий..." data-key="${safeKey}">
+              <button class="comment-save-btn" data-key="${safeKey}">Сохранить комментарий</button>
+            </div>
           </div>
         `;
       }
@@ -457,13 +636,18 @@
         input.removeEventListener('change', handleTranslationChange);
         input.addEventListener('change', handleTranslationChange);
       });
+
+      container.querySelectorAll('.comment-save-btn').forEach(btn => {
+        btn.removeEventListener('click', handleCommentSave);
+        btn.addEventListener('click', handleCommentSave);
+      });
     } catch (err) {
       console.error('Ошибка при рендеринге:', err);
       container.innerHTML = `<div class="loader" style="color:#c62828;">Ошибка отображения: ${err.message}</div>`;
     }
   }
 
-  // ========== ОБРАБОТЧИК ИЗМЕНЕНИЯ ПЕРЕВОДА (ИСПРАВЛЕННЫЙ) ==========
+  // ========== ОБРАБОТЧИК ИЗМЕНЕНИЯ ПЕРЕВОДА ==========
   function handleTranslationChange(e) {
     const input = e.currentTarget;
     const key = input.dataset.key;
@@ -478,12 +662,13 @@
     const item = allData.find(d => d.key === key);
     if (!item) return;
 
-    // Если режим группировки включён, вычисляем группу по шаблону
+    const userInfo = getCurrentUserInfo();
+
+    // Если режим группировки включён, обрабатываем группу
     if (groupMode.checked) {
       const pattern = makePattern(item.original);
       const members = allData.filter(m => makePattern(m.original) === pattern);
       if (members.length > 1) {
-        console.log(`Группа для #${key}:`, members.map(m => m.key));
         const updates = {};
         for (const member of members) {
           let memberTranslation;
@@ -493,14 +678,20 @@
             memberTranslation = applyTranslationToMember(newTranslation, member.original);
           }
           const localItem = allData.find(d => d.key === member.key);
-          if (localItem) localItem.translation = memberTranslation;
-          updates[member.key] = memberTranslation;
-          console.log(`#${member.key} → ${memberTranslation}`);
+          if (localItem) {
+            localItem.translation = memberTranslation;
+            localItem.translationAuthor = userInfo.uid;
+            localItem.translationAuthorName = userInfo.displayName;
+          }
+          updates[member.key] = {
+            translation: memberTranslation,
+            translationAuthor: userInfo.uid,
+            translationAuthorName: userInfo.displayName
+          };
         }
         // Отправляем в Firebase
         for (const [k, val] of Object.entries(updates)) {
-          stringsRef.child(k).update({ translation: val })
-            .then(() => console.log(`#${k} сохранено`))
+          stringsRef.child(k).update(val)
             .catch(err => alert('Ошибка сохранения для #' + k + ': ' + err.message));
         }
         render();
@@ -508,10 +699,47 @@
       }
     }
 
-    // Обычное сохранение для одной записи (если группа не найдена или режим выключен)
-    stringsRef.child(key).update({ translation: newTranslation })
-      .then(() => console.log(`#${key} сохранено`))
+    // Обычное сохранение
+    const updateData = {
+      translation: newTranslation,
+      translationAuthor: userInfo.uid,
+      translationAuthorName: userInfo.displayName
+    };
+    stringsRef.child(key).update(updateData)
       .catch(err => alert('Ошибка сохранения: ' + err.message));
+  }
+
+  // ========== ОБРАБОТЧИК СОХРАНЕНИЯ КОММЕНТАРИЯ ==========
+  function handleCommentSave(e) {
+    const btn = e.currentTarget;
+    const key = btn.dataset.key;
+    const section = btn.closest('.entry').querySelector('.comment-section');
+    const input = section.querySelector('.comment-input');
+    const commentText = input.value.trim();
+    if (commentText === '') {
+      alert('Комментарий не может быть пустым.');
+      return;
+    }
+
+    const userInfo = getCurrentUserInfo();
+    const updateData = {
+      comment: commentText,
+      commentAuthor: userInfo.uid,
+      commentAuthorName: userInfo.displayName
+    };
+
+    stringsRef.child(key).update(updateData)
+      .then(() => {
+        // Обновляем локальные данные
+        const item = allData.find(d => d.key === key);
+        if (item) {
+          item.comment = commentText;
+          item.commentAuthor = userInfo.uid;
+          item.commentAuthorName = userInfo.displayName;
+        }
+        render();
+      })
+      .catch(err => alert('Ошибка сохранения комментария: ' + err.message));
   }
 
   // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В БАЗЕ ==========
@@ -527,7 +755,11 @@
       key,
       original: entry.original || '',
       translation: entry.translation || '',
-      comment: entry.comment || ''
+      translationAuthor: entry.translationAuthor || '',
+      translationAuthorName: entry.translationAuthorName || '',
+      comment: entry.comment || '',
+      commentAuthor: entry.commentAuthor || '',
+      commentAuthorName: entry.commentAuthorName || ''
     }));
     render();
   });
@@ -562,7 +794,11 @@
           updates[item.number] = {
             original: item.content,
             translation: '',
-            comment: item.comment
+            translationAuthor: '',
+            translationAuthorName: '',
+            comment: '',
+            commentAuthor: '',
+            commentAuthorName: ''
           };
         }
         stringsRef.update(updates)
@@ -666,6 +902,18 @@
 
   refreshBtn.addEventListener('click', () => {
     stringsRef.once('value', () => render());
+  });
+
+  // ========== ПОДКЛЮЧЕНИЕ ==========
+  const connectedRef = firebase.database().ref('.info/connected');
+  connectedRef.on('value', (snap) => {
+    if (snap.val()) {
+      connectionStatus.innerHTML = '✅ Подключено к Firebase';
+      connectionStatus.style.color = '#2e7d32';
+    } else {
+      connectionStatus.innerHTML = '❌ Офлайн (изменения сохранятся позже)';
+      connectionStatus.style.color = '#e53935';
+    }
   });
 
   console.log('Приложение готово.');
