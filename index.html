@@ -8,7 +8,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <style>
-    /* все стили без изменений, как в предыдущей версии */
+    /* (стили без изменений – такие же, как в предыдущей версии) */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -577,7 +577,6 @@
       importBtn.style.display = 'none';
       importTranslationBtn.style.display = 'none';
       exportBtn.style.display = 'none';
-      // Скрываем чекбокс подтверждения для не-редакторов
       confirmImportedTranslations.closest('label').style.display = 'none';
       render();
     }
@@ -1066,16 +1065,15 @@
       .catch(err => alert('Ошибка обновления подтверждения: ' + err.message));
   }
 
-  // ========== ИМПОРТ ОРИГИНАЛЬНЫХ СТРОК ==========
+  // ========== ИМПОРТ ОРИГИНАЛЬНЫХ СТРОК (с window.confirm) ==========
   function parseWTS(text) {
-    const regex = /STRING\s+(\d+)\s*(?:\/\/\s*([^\n]*))?\s*\{([\s\S]*?)\}/g;
+    const regex = /STRING\s+(\d+)\s*(?:\/\/[^\n]*)?\s*\{([\s\S]*?)\}/g;
     const entries = [];
     let match;
     while ((match = regex.exec(text)) !== null) {
       const number = match[1];
-      const comment = (match[2] || '').trim();
-      const content = match[3].trim();
-      if (content) entries.push({ number, comment, content });
+      const content = match[2].trim();
+      if (content) entries.push({ number, content });
     }
     return entries;
   }
@@ -1090,7 +1088,7 @@
           alert('Не удалось найти ни одной строки STRING в файле.');
           return;
         }
-        if (!confirm(`Найдено ${parsed.length} строк. Импортировать?`)) return;
+        if (!window.confirm(`Найдено ${parsed.length} строк. Импортировать?`)) return;
         const updates = {};
         for (const item of parsed) {
           updates[item.number] = {
@@ -1098,7 +1096,7 @@
             translation: '',
             translationAuthor: '',
             translationAuthorName: '',
-            wtsComment: item.comment,
+            wtsComment: '',
             userComments: [],
             confirmed: false,
             confirmedBy: '',
@@ -1122,7 +1120,7 @@
     this.value = '';
   });
 
-  // ========== НОВЫЙ ИМПОРТ ПЕРЕВОДОВ С ОПЦИЕЙ ПОДТВЕРЖДЕНИЯ ==========
+  // ========== ИМПОРТ ПЕРЕВОДОВ С ОПЦИЕЙ ПОДТВЕРЖДЕНИЯ (с window.confirm) ==========
   function importTranslations(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1154,7 +1152,6 @@
                 translationAuthor: user.uid,
                 translationAuthorName: user.displayName
               };
-              // Если чекбокс включён – добавляем подтверждение
               if (confirm) {
                 updateData.confirmed = true;
                 updateData.confirmedBy = user.uid;
@@ -1172,7 +1169,7 @@
         }
 
         const confirmMsg = confirm ? ' (будут помечены как подтверждённые)' : ' (статус подтверждения не изменится)';
-        if (!confirm(`Найдено ${count} совпадений. Обновить переводы для этих строк?${confirmMsg}`)) return;
+        if (!window.confirm(`Найдено ${count} совпадений. Обновить переводы для этих строк?${confirmMsg}`)) return;
 
         const promiseArray = [];
         for (const [key, data] of Object.entries(updates)) {
