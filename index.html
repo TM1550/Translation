@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Перевод .wts – совместный словарь</title>
+  <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
@@ -438,10 +439,8 @@
           const data = snap.val() || {};
           let name = data.displayName;
           let role = data.role || 'translator';
-          // Если имени нет в базе, берём из Google профиля
           if (!name) {
             name = user.displayName || 'Аноним';
-            // Сохраняем имя в базу (если есть права)
             usersRef.child(uid).update({ displayName: name }).catch(err => {
               console.warn('Не удалось сохранить имя в базу:', err);
             });
@@ -449,10 +448,9 @@
           applyUserData(name, role);
         })
         .catch((err) => {
-          // Если база не доступна, используем данные из профиля Google
           console.warn('Не удалось прочитать данные пользователя из базы, используем профиль Google:', err);
           const name = user.displayName || 'Аноним';
-          const role = 'translator'; // по умолчанию
+          const role = 'translator';
           applyUserData(name, role);
         });
     } else {
@@ -492,32 +490,17 @@
     render();
   }
 
-  // Обработка результата перенаправления (для Google)
-  function handleRedirectResult() {
-    auth.getRedirectResult()
-      .then((result) => {
-        if (result.user) {
-          // Вход выполнен, пользователь уже авторизован, onAuthStateChanged сработает
-        }
-      })
-      .catch((error) => {
-        if (error.code === 'auth/operation-not-supported-in-this-environment') {
-          alert('Ваш браузер или окружение не поддерживают авторизацию. Убедитесь, что вы используете HTTPS, и разрешите использование веб-хранилища.');
-        } else {
-          console.error('Ошибка при входе:', error);
-          alert('Ошибка входа: ' + error.message);
-        }
-      });
-  }
-
-  // Вход через Google (с перенаправлением)
+  // Вход через Google (с popup)
   loginGoogleBtn.addEventListener('click', () => {
     if (!isAuthSupported()) {
       alert('Авторизация не поддерживается в текущем окружении. Используйте HTTPS.');
       return;
     }
     const provider = new firebase.auth.GoogleAuthProvider();
-    auth.signInWithRedirect(provider);
+    auth.signInWithPopup(provider)
+      .catch(err => {
+        alert('Ошибка входа: ' + err.message);
+      });
   });
 
   // Выход
@@ -544,9 +527,6 @@
   auth.onAuthStateChanged(user => {
     updateAuthUI(user);
   });
-
-  // При загрузке страницы проверяем результат перенаправления
-  handleRedirectResult();
 
   // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
