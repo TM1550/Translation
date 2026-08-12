@@ -8,6 +8,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <style>
+    /* все стили без изменений, как в предыдущей версии */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -84,7 +85,9 @@
     .toolbar .export-btn:hover { background: #388e3c; }
     .toolbar .import-btn { background: #e65100; }
     .toolbar .import-btn:hover { background: #bf360c; }
-    #fileInput { display: none; }
+    .toolbar .import-translation-btn { background: #00695c; }
+    .toolbar .import-translation-btn:hover { background: #004d40; }
+    #fileInput, #translationFileInput { display: none; }
     .filter-group {
       display: flex;
       align-items: center;
@@ -408,6 +411,11 @@
     <button id="refreshBtn">🔄 Обновить</button>
     <button class="import-btn" id="importBtn" style="display:none;">📂 Загрузить .wts</button>
     <input type="file" id="fileInput" accept=".wts">
+    <button class="import-translation-btn" id="importTranslationBtn" style="display:none;">📥 Импорт переводов .wts</button>
+    <input type="file" id="translationFileInput" accept=".wts" style="display:none;">
+    <label style="display:inline-flex;align-items:center;gap:4px;font-size:14px;background:#e0f2f1;padding:4px 12px;border-radius:20px;cursor:pointer;">
+      <input type="checkbox" id="confirmImportedTranslations"> Подтвердить импорт
+    </label>
     <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts</button>
 
     <div class="filter-group">
@@ -484,6 +492,9 @@
   const connectionStatus = document.getElementById('connectionStatus');
   const fileInput = document.getElementById('fileInput');
   const importBtn = document.getElementById('importBtn');
+  const importTranslationBtn = document.getElementById('importTranslationBtn');
+  const translationFileInput = document.getElementById('translationFileInput');
+  const confirmImportedTranslations = document.getElementById('confirmImportedTranslations');
   const exportBtn = document.getElementById('exportBtn');
   const refreshBtn = document.getElementById('refreshBtn');
   const filterOnlyRussian = document.getElementById('filterOnlyRussian');
@@ -564,7 +575,10 @@
       loginGoogleBtn.style.display = 'inline-block';
       logoutBtn.style.display = 'none';
       importBtn.style.display = 'none';
+      importTranslationBtn.style.display = 'none';
       exportBtn.style.display = 'none';
+      // Скрываем чекбокс подтверждения для не-редакторов
+      confirmImportedTranslations.closest('label').style.display = 'none';
       render();
     }
   }
@@ -580,10 +594,14 @@
     logoutBtn.style.display = 'inline-block';
     if (role === 'editor') {
       importBtn.style.display = 'inline-block';
+      importTranslationBtn.style.display = 'inline-block';
       exportBtn.style.display = 'inline-block';
+      confirmImportedTranslations.closest('label').style.display = 'inline-flex';
     } else {
       importBtn.style.display = 'none';
+      importTranslationBtn.style.display = 'none';
       exportBtn.style.display = 'none';
+      confirmImportedTranslations.closest('label').style.display = 'none';
     }
     render();
   }
@@ -681,7 +699,6 @@
   // ========== ЛОГИКА ФИЛЬТРАЦИИ ==========
   function getFilteredData() {
     let filtered = allData;
-    // Поиск по подстроке (оригинал или перевод)
     const searchTerm = searchInput.value.trim().toLowerCase();
     if (searchTerm !== '') {
       filtered = filtered.filter(item => {
@@ -1049,38 +1066,7 @@
       .catch(err => alert('Ошибка обновления подтверждения: ' + err.message));
   }
 
-  // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В БАЗЕ ==========
-  stringsRef.on('value', (snapshot) => {
-    const data = snapshot.val();
-    if (!data) {
-      allData = [];
-      render();
-      return;
-    }
-    const entries = Object.entries(data).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
-    allData = entries.map(([key, entry]) => {
-      let wtsComment = entry.wtsComment || '';
-      let userComments = entry.userComments || [];
-      if (entry.comment && !wtsComment) {
-        wtsComment = entry.comment;
-      }
-      return {
-        key,
-        original: entry.original || '',
-        translation: entry.translation || '',
-        translationAuthor: entry.translationAuthor || '',
-        translationAuthorName: entry.translationAuthorName || '',
-        wtsComment: wtsComment,
-        userComments: Array.isArray(userComments) ? userComments : [],
-        confirmed: entry.confirmed || false,
-        confirmedBy: entry.confirmedBy || '',
-        confirmedByName: entry.confirmedByName || ''
-      };
-    });
-    render();
-  });
-
-  // ========== ИМПОРТ / ЭКСПОРТ ==========
+  // ========== ИМПОРТ ОРИГИНАЛЬНЫХ СТРОК ==========
   function parseWTS(text) {
     const regex = /STRING\s+(\d+)\s*(?:\/\/\s*([^\n]*))?\s*\{([\s\S]*?)\}/g;
     const entries = [];
@@ -1136,6 +1122,96 @@
     this.value = '';
   });
 
+  // ========== НОВЫЙ ИМПОРТ ПЕРЕВОДОВ С ОПЦИЕЙ ПОДТВЕРЖДЕНИЯ ==========
+  function importTranslations(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        const text = e.target.result;
+        const parsed = parseWTS(text);
+        if (parsed.length === 0) {
+          alert('Не удалось найти ни одной строки STRING в файле.');
+          return;
+        }
+
+        const translationMap = {};
+        for (const item of parsed) {
+          translationMap[item.number] = item.content;
+        }
+
+        const user = getCurrentUserInfo();
+        const updates = {};
+        let count = 0;
+        const confirm = confirmImportedTranslations.checked;
+
+        for (const existing of allData) {
+          const key = existing.key;
+          if (translationMap.hasOwnProperty(key)) {
+            const newTranslation = translationMap[key];
+            if (newTranslation && newTranslation.trim() !== '') {
+              const updateData = {
+                translation: newTranslation,
+                translationAuthor: user.uid,
+                translationAuthorName: user.displayName
+              };
+              // Если чекбокс включён – добавляем подтверждение
+              if (confirm) {
+                updateData.confirmed = true;
+                updateData.confirmedBy = user.uid;
+                updateData.confirmedByName = user.displayName;
+              }
+              updates[key] = updateData;
+              count++;
+            }
+          }
+        }
+
+        if (count === 0) {
+          alert('Не найдено совпадений по номерам STRING. Ни один перевод не обновлён.');
+          return;
+        }
+
+        const confirmMsg = confirm ? ' (будут помечены как подтверждённые)' : ' (статус подтверждения не изменится)';
+        if (!confirm(`Найдено ${count} совпадений. Обновить переводы для этих строк?${confirmMsg}`)) return;
+
+        const promiseArray = [];
+        for (const [key, data] of Object.entries(updates)) {
+          promiseArray.push(stringsRef.child(key).update(data));
+        }
+        Promise.all(promiseArray)
+          .then(() => {
+            alert(`Обновлено переводов: ${count}`);
+            for (const [key, data] of Object.entries(updates)) {
+              const localItem = allData.find(d => d.key === key);
+              if (localItem) {
+                localItem.translation = data.translation;
+                localItem.translationAuthor = data.translationAuthor;
+                localItem.translationAuthorName = data.translationAuthorName;
+                if (confirm) {
+                  localItem.confirmed = data.confirmed;
+                  localItem.confirmedBy = data.confirmedBy;
+                  localItem.confirmedByName = data.confirmedByName;
+                }
+              }
+            }
+            render();
+          })
+          .catch(err => alert('Ошибка при обновлении переводов: ' + err.message));
+      } catch (err) {
+        alert('Ошибка при обработке файла: ' + err.message);
+      }
+    };
+    reader.onerror = () => alert('Ошибка чтения файла');
+    reader.readAsText(file, 'UTF-8');
+  }
+
+  importTranslationBtn.addEventListener('click', () => translationFileInput.click());
+  translationFileInput.addEventListener('change', function(e) {
+    if (this.files && this.files[0]) importTranslations(this.files[0]);
+    this.value = '';
+  });
+
+  // ========== ЭКСПОРТ ==========
   function generateWTS(data) {
     const keys = Object.keys(data).sort((a, b) => parseInt(a) - parseInt(b));
     let output = '';
@@ -1227,6 +1303,37 @@
 
   refreshBtn.addEventListener('click', () => {
     stringsRef.once('value', () => render());
+  });
+
+  // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В БАЗЕ ==========
+  stringsRef.on('value', (snapshot) => {
+    const data = snapshot.val();
+    if (!data) {
+      allData = [];
+      render();
+      return;
+    }
+    const entries = Object.entries(data).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
+    allData = entries.map(([key, entry]) => {
+      let wtsComment = entry.wtsComment || '';
+      let userComments = entry.userComments || [];
+      if (entry.comment && !wtsComment) {
+        wtsComment = entry.comment;
+      }
+      return {
+        key,
+        original: entry.original || '',
+        translation: entry.translation || '',
+        translationAuthor: entry.translationAuthor || '',
+        translationAuthorName: entry.translationAuthorName || '',
+        wtsComment: wtsComment,
+        userComments: Array.isArray(userComments) ? userComments : [],
+        confirmed: entry.confirmed || false,
+        confirmedBy: entry.confirmedBy || '',
+        confirmedByName: entry.confirmedByName || ''
+      };
+    });
+    render();
   });
 
   // ========== ПОДКЛЮЧЕНИЕ ==========
