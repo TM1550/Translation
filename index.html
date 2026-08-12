@@ -106,6 +106,23 @@
       height: 16px;
       cursor: pointer;
     }
+    .search-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .search-group input[type="text"] {
+      padding: 4px 10px;
+      border: 1px solid #ccc;
+      border-radius: 20px;
+      font-size: 14px;
+      width: 200px;
+      max-width: 100%;
+    }
+    .search-group input[type="text"]:focus {
+      border-color: #0d47a1;
+      outline: none;
+    }
     .pagination {
       display: flex;
       align-items: center;
@@ -331,7 +348,6 @@
     }
     .status .online { color: #2e7d32; font-weight: 600; }
 
-    /* Модальное окно для комментариев */
     .modal-overlay {
       display: none;
       position: fixed;
@@ -400,6 +416,10 @@
       <label><input type="checkbox" id="filterHideEditorSuffix"> Скрыть с EditorSuffix</label>
       <label><input type="checkbox" id="filterUnconfirmed"> Неподтверждённые переводы</label>
       <label><input type="checkbox" id="groupMode"> Группировать по шаблону</label>
+    </div>
+
+    <div class="search-group">
+      <input type="text" id="searchInput" placeholder="🔍 Поиск по фразе">
     </div>
 
     <div class="pagination">
@@ -477,6 +497,7 @@
   const pageInfo = document.getElementById('pageInfo');
   const pageInput = document.getElementById('pageInput');
   const gotoPageBtn = document.getElementById('gotoPage');
+  const searchInput = document.getElementById('searchInput');
 
   // Авторизация элементы
   const userInfo = document.getElementById('userInfo');
@@ -660,6 +681,16 @@
   // ========== ЛОГИКА ФИЛЬТРАЦИИ ==========
   function getFilteredData() {
     let filtered = allData;
+    // Поиск по подстроке (оригинал или перевод)
+    const searchTerm = searchInput.value.trim().toLowerCase();
+    if (searchTerm !== '') {
+      filtered = filtered.filter(item => {
+        const orig = (item.original || '').toLowerCase();
+        const trans = (item.translation || '').toLowerCase();
+        return orig.includes(searchTerm) || trans.includes(searchTerm);
+      });
+    }
+
     if (filterOnlyRussian.checked) {
       filtered = filtered.filter(item => hasRussian(item.original));
     }
@@ -724,7 +755,12 @@
 
       const totalAll = allData.length;
       const filteredCount = getFilteredData().length;
-      statsSpan.textContent = `Всего: ${totalAll} | Отфильтровано: ${filteredCount} | Показано: ${totalDisplay}`;
+      const searchTerm = searchInput.value.trim();
+      let statsText = `Всего: ${totalAll} | Отфильтровано: ${filteredCount} | Показано: ${totalDisplay}`;
+      if (searchTerm !== '') {
+        statsText += ` | Поиск: "${searchTerm}"`;
+      }
+      statsSpan.textContent = statsText;
 
       if (totalDisplay === 0) {
         container.innerHTML = '<div class="loader">Нет записей, соответствующих фильтрам.</div>';
@@ -817,7 +853,7 @@
       container.innerHTML = html;
       countStatus.textContent = totalDisplay;
 
-      // Обработчики (кроме show-all-btn, для них используем делегирование)
+      // Обработчики
       container.querySelectorAll('.translation-input').forEach(input => {
         input.removeEventListener('change', handleTranslationChange);
         input.addEventListener('change', handleTranslationChange);
@@ -833,7 +869,7 @@
         btn.addEventListener('click', handleConfirmToggle);
       });
 
-      // show-all-btn обрабатывается через делегирование на container (добавлено один раз вне render)
+      // show-all-btn обрабатывается через делегирование
     } catch (err) {
       console.error('Ошибка при рендеринге:', err);
       container.innerHTML = `<div class="loader" style="color:#c62828;">Ошибка отображения: ${err.message}</div>`;
@@ -935,7 +971,6 @@
   }
 
   // ========== ПОКАЗ ВСЕХ КОММЕНТАРИЕВ (делегирование) ==========
-  // Функция открытия модального окна по ключу
   function showAllCommentsForKey(key) {
     const item = allData.find(d => d.key === key);
     if (!item) return;
@@ -961,7 +996,6 @@
     modalOverlay.classList.add('active');
   }
 
-  // Обработчик клика на кнопках show-all-btn через делегирование
   container.addEventListener('click', function(e) {
     const btn = e.target.closest('.show-all-btn');
     if (btn) {
@@ -972,7 +1006,6 @@
     }
   });
 
-  // Закрытие модального окна
   modalCloseBtn.addEventListener('click', () => {
     modalOverlay.classList.remove('active');
   });
@@ -1177,6 +1210,12 @@
   gotoPageBtn.addEventListener('click', handleGoto);
   pageInput.addEventListener('keypress', function(e) {
     if (e.key === 'Enter') handleGoto();
+  });
+
+  // Событие поиска
+  searchInput.addEventListener('input', function() {
+    currentPage = 0;
+    render();
   });
 
   // Фильтры
