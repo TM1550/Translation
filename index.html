@@ -8,7 +8,6 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <style>
-    /* (стили без изменений – такие же, как в предыдущей версии) */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -215,6 +214,10 @@
       border-radius: 6px;
       font-size: 15px;
       min-width: 150px;
+      resize: vertical;
+      font-family: inherit;
+      line-height: 1.4;
+      min-height: 50px;
     }
     .entry .translation-input:focus {
       border-color: #0d47a1;
@@ -232,6 +235,7 @@
       font-size: 12px;
       color: #666;
       margin: 2px 0;
+      width: 100%;
     }
     .entry .confirmed-badge {
       font-size: 13px;
@@ -291,6 +295,8 @@
     }
     .entry .comment-section .user-comment .comment-text {
       flex: 1;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
     .entry .comment-section .user-comment .comment-author {
       font-size: 12px;
@@ -390,7 +396,7 @@
       display: flex;
       justify-content: space-between;
     }
-    .modal-box .modal-comment .modal-text { flex: 1; }
+    .modal-box .modal-comment .modal-text { flex: 1; white-space: pre-wrap; word-break: break-word; }
     .modal-box .modal-comment .modal-author { font-size: 12px; color: #666; margin-left: 12px; white-space: nowrap; }
   </style>
 </head>
@@ -848,11 +854,12 @@
           <button class="comment-save-btn" data-key="${safeKey}">Отправить</button>
         `;
 
+        // Заменяем input на textarea для перевода
         html += `
           <div class="entry ${groupClass}" data-key="${safeKey}" data-group='${JSON.stringify(item._groupMembers || [])}'>
             <span class="meta">#${key}</span>
             <div class="original">${escapeHtml(original)}</div>
-            <input class="translation-input" type="text" value="${escapeHtml(translation)}" data-key="${safeKey}" placeholder="Введите перевод...">
+            <textarea class="translation-input" rows="2" data-key="${safeKey}" placeholder="Введите перевод... (Enter для переноса)">${escapeHtml(translation)}</textarea>
             ${groupInfo ? `<span class="group-info">${groupInfo}</span>` : ''}
             <div class="author-info" style="flex:1 1 100%;">
               ${translationAuthorDisplay ? `<span>${translationAuthorDisplay}</span>` : ''}
@@ -869,10 +876,18 @@
       container.innerHTML = html;
       countStatus.textContent = totalDisplay;
 
-      // Обработчики
-      container.querySelectorAll('.translation-input').forEach(input => {
-        input.removeEventListener('change', handleTranslationChange);
-        input.addEventListener('change', handleTranslationChange);
+      // Обработчики для textarea
+      container.querySelectorAll('.translation-input').forEach(textarea => {
+        textarea.removeEventListener('change', handleTranslationChange);
+        textarea.addEventListener('change', handleTranslationChange);
+        // Также сохраняем при потере фокуса (change уже сработает)
+        // Можно добавить сохранение по Ctrl+Enter
+        textarea.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            this.blur(); // вызывает событие change
+          }
+        });
       });
 
       container.querySelectorAll('.comment-save-btn').forEach(btn => {
@@ -895,15 +910,21 @@
   // ========== ОБРАБОТЧИКИ ==========
 
   function handleTranslationChange(e) {
-    const input = e.currentTarget;
-    const key = input.dataset.key;
-    const newTranslation = input.value.trim();
-    if (newTranslation === '') {
+    const textarea = e.currentTarget;
+    const key = textarea.dataset.key;
+    const newTranslation = textarea.value; // сохраняем как есть, включая переносы
+    // Разрешаем пустой перевод? Нет, ранее требовали не пустой. Но можно разрешить пустой, чтобы пользователь мог удалить перевод.
+    // Однако фильтр "Без перевода" проверяет trim(), так что пустой перевод будет считаться отсутствующим.
+    // Оставим проверку на пустой только для предупреждения, но разрешим сохранять пустую строку.
+    // Если хотим запретить пустой, раскомментируйте.
+    /*
+    if (newTranslation.trim() === '') {
       alert('Перевод не может быть пустым.');
       const originalItem = allData.find(d => d.key === key);
-      input.value = originalItem?.translation || '';
+      textarea.value = originalItem?.translation || '';
       return;
     }
+    */
 
     const item = allData.find(d => d.key === key);
     if (!item) return;
@@ -1065,9 +1086,8 @@
       .catch(err => alert('Ошибка обновления подтверждения: ' + err.message));
   }
 
-  // ========== ИМПОРТ ОРИГИНАЛЬНЫХ СТРОК (с сохранением комментария) ==========
+  // ========== ИМПОРТ ОРИГИНАЛЬНЫХ СТРОК ==========
   function parseWTS(text) {
-    // Теперь захватываем комментарий (после //) отдельно
     const regex = /STRING\s+(\d+)\s*(?:\/\/([^\n]*))?\s*\{([\s\S]*?)\}/g;
     const entries = [];
     let match;
@@ -1098,7 +1118,7 @@
             translation: '',
             translationAuthor: '',
             translationAuthorName: '',
-            wtsComment: item.comment,  // сохраняем комментарий из файла
+            wtsComment: item.comment,
             userComments: [],
             confirmed: false,
             confirmedBy: '',
@@ -1122,13 +1142,12 @@
     this.value = '';
   });
 
-  // ========== ИМПОРТ ПЕРЕВОДОВ (не трогаем wtsComment) ==========
+  // ========== ИМПОРТ ПЕРЕВОДОВ ==========
   function importTranslations(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
       try {
         const text = e.target.result;
-        // Используем ту же функцию парсинга (комментарии игнорируем)
         const parsed = parseWTS(text);
         if (parsed.length === 0) {
           alert('Не удалось найти ни одной строки STRING в файле.');
@@ -1288,13 +1307,11 @@
     if (e.key === 'Enter') handleGoto();
   });
 
-  // Событие поиска
   searchInput.addEventListener('input', function() {
     currentPage = 0;
     render();
   });
 
-  // Фильтры
   filterOnlyRussian.addEventListener('change', () => { currentPage = 0; render(); });
   filterNoTranslation.addEventListener('change', () => { currentPage = 0; render(); });
   filterHideEditorSuffix.addEventListener('change', () => { currentPage = 0; render(); });
