@@ -1065,15 +1065,17 @@
       .catch(err => alert('Ошибка обновления подтверждения: ' + err.message));
   }
 
-  // ========== ИМПОРТ ОРИГИНАЛЬНЫХ СТРОК (с window.confirm) ==========
+  // ========== ИМПОРТ ОРИГИНАЛЬНЫХ СТРОК (с сохранением комментария) ==========
   function parseWTS(text) {
-    const regex = /STRING\s+(\d+)\s*(?:\/\/[^\n]*)?\s*\{([\s\S]*?)\}/g;
+    // Теперь захватываем комментарий (после //) отдельно
+    const regex = /STRING\s+(\d+)\s*(?:\/\/([^\n]*))?\s*\{([\s\S]*?)\}/g;
     const entries = [];
     let match;
     while ((match = regex.exec(text)) !== null) {
       const number = match[1];
-      const content = match[2].trim();
-      if (content) entries.push({ number, content });
+      const comment = (match[2] || '').trim();
+      const content = match[3].trim();
+      if (content) entries.push({ number, comment, content });
     }
     return entries;
   }
@@ -1096,7 +1098,7 @@
             translation: '',
             translationAuthor: '',
             translationAuthorName: '',
-            wtsComment: '',
+            wtsComment: item.comment,  // сохраняем комментарий из файла
             userComments: [],
             confirmed: false,
             confirmedBy: '',
@@ -1120,12 +1122,13 @@
     this.value = '';
   });
 
-  // ========== ИМПОРТ ПЕРЕВОДОВ С ОПЦИЕЙ ПОДТВЕРЖДЕНИЯ (с window.confirm) ==========
+  // ========== ИМПОРТ ПЕРЕВОДОВ (не трогаем wtsComment) ==========
   function importTranslations(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
       try {
         const text = e.target.result;
+        // Используем ту же функцию парсинга (комментарии игнорируем)
         const parsed = parseWTS(text);
         if (parsed.length === 0) {
           alert('Не удалось найти ни одной строки STRING в файле.');
