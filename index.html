@@ -489,6 +489,7 @@
   const db = firebase.database();
   const auth = firebase.auth();
   const stringsRef = db.ref('strings');
+  const translationsRef = db.ref('translations');
   const usersRef = db.ref('users');
 
   // DOM элементы
@@ -1090,7 +1091,23 @@
     return entries;
   }
 
-  // ========== ИМПОРТ ОРИГИНАЛЬНОГО .WTS ==========
+  // ========== ОБНОВЛЕНИЕ СЛОВАРЯ ПЕРЕВОДОВ ==========
+  function updateTranslationsDictionary() {
+    // Собираем пары (очищенный оригинал -> перевод) из всех существующих записей
+    const dict = {};
+    for (const entry of allData) {
+      const cleanOrig = cleanWtsText(entry.original);
+      const translation = entry.translation || '';
+      if (cleanOrig && translation.trim() !== '') {
+        dict[cleanOrig] = translation;
+      }
+    }
+    // Сохраняем в Firebase
+    return translationsRef.set(dict)
+      .catch(err => console.error('Ошибка обновления словаря переводов:', err));
+  }
+
+  // ========== ИМПОРТ ОРИГИНАЛЬНОГО .WTS (с обновлением словаря и применением переводов) ==========
   function importWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1102,23 +1119,87 @@
           return;
         }
         if (!window.confirm(`Найдено ${parsed.length} строк. Импортировать?`)) return;
-        const updates = {};
-        for (const item of parsed) {
-          updates[item.number] = {
-            original: item.content,
-            translation: '',
-            translationAuthor: '',
-            translationAuthorName: '',
-            wtsComment: item.comment,
-            userComments: [],
-            confirmed: false,
-            confirmedBy: '',
-            confirmedByName: ''
-          };
-        }
-        stringsRef.update(updates)
-          .then(() => alert(`Импортировано ${parsed.length} строк.`))
-          .catch(err => alert('Ошибка импорта: ' + err.message));
+
+        // Шаг 1: Обновить словарь переводов из текущих записей
+        updateTranslationsDictionary()
+          .then(() => {
+            // Шаг 2: Загрузить новые строки из файла
+            const user = getCurrentUserInfo();
+            // Получаем текущий словарь переводов из Firebase (на случай, если он изменился)
+            return translationsRef.once('value')
+              .then(snapshot => {
+                const translationDict = snapshot.val() || {};
+
+                // Шаг 3: Подготовить обновления для strings
+                const updates = {};
+                for (const item of parsed) {
+                  const key = item.number;
+                  const newOriginal = item.content;
+                  const newComment = item.comment;
+
+                  // Проверяем, существует ли запись с таким номером
+                  const existing = allData.find(e => e.key === key);
+
+                  let translation = '';
+                  let author = '';
+                  let authorName = '';
+                  let confirmed = false;
+                  let confirmedBy = '';
+                  let confirmedByName = '';
+
+                  if (existing) {
+                    // Если запись есть – оставляем её перевод, если он есть, иначе ищем в словаре
+                    if (existing.translation && existing.translation.trim() !== '') {
+                      translation = existing.translation;
+                      author = existing.translationAuthor || '';
+                      authorName = existing.translationAuthorName || '';
+                      confirmed = existing.confirmed || false;
+                      confirmedBy = existing.confirmedBy || '';
+                      confirmedByName = existing.confirmedByName || '';
+                    } else {
+                      // Перевода нет – ищем в словаре
+                      const cleanOrig = cleanWtsText(newOriginal);
+                      if (translationDict[cleanOrig]) {
+                        translation = translationDict[cleanOrig];
+                        // Автора не копируем, так как перевод из словаря может быть от другого пользователя
+                        // Оставляем поля пустыми
+                      }
+                    }
+                  } else {
+                    // Новая запись – ищем в словаре
+                    const cleanOrig = cleanWtsText(newOriginal);
+                    if (translationDict[cleanOrig]) {
+                      translation = translationDict[cleanOrig];
+                    }
+                  }
+
+                  updates[key] = {
+                    original: newOriginal,
+                    translation: translation,
+                    translationAuthor: author || '',
+                    translationAuthorName: authorName || '',
+                    wtsComment: newComment,
+                    userComments: existing ? (existing.userComments || []) : [],
+                    confirmed: confirmed || false,
+                    confirmedBy: confirmedBy || '',
+                    confirmedByName: confirmedByName || ''
+                  };
+                }
+
+                // Применяем обновления
+                return stringsRef.update(updates)
+                  .then(() => {
+                    // После импорта снова обновляем словарь (на случай, если появились новые переводы)
+                    // Но обновим его после того, как данные придут в allData (через слушатель)
+                    // Мы можем просто перезагрузить данные, но слушатель сам обновит allData и вызовет render.
+                    // Поэтому просто вернём успех.
+                    alert(`Импортировано ${parsed.length} строк. Словарь переводов обновлён, переводы применены по совпадению оригиналов.`);
+                  });
+              });
+          })
+          .catch(err => {
+            alert('Ошибка импорта: ' + err.message);
+          });
       } catch (err) {
         alert('Ошибка при обработке файла: ' + err.message);
       }
@@ -1226,6 +1307,8 @@
                 }
               }
             }
+            // Также обновляем словарь переводов после CSV-импорта
+            updateTranslationsDictionary();
             render();
           })
           .catch(err => alert('Ошибка при обновлении переводов: ' + err.message));
