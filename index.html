@@ -86,7 +86,9 @@
     .toolbar .import-btn:hover { background: #bf360c; }
     .toolbar .import-translation-btn { background: #00695c; }
     .toolbar .import-translation-btn:hover { background: #004d40; }
-    #fileInput, #translationFileInput { display: none; }
+    .toolbar .import-csv-btn { background: #4a148c; }
+    .toolbar .import-csv-btn:hover { background: #6a1b9a; }
+    #fileInput, #translationFileInput, #csvFileInput { display: none; }
     .filter-group {
       display: flex;
       align-items: center;
@@ -419,8 +421,13 @@
     <input type="file" id="fileInput" accept=".wts">
     <button class="import-translation-btn" id="importTranslationBtn" style="display:none;">📥 Импорт переводов .wts</button>
     <input type="file" id="translationFileInput" accept=".wts" style="display:none;">
+    <button class="import-csv-btn" id="importCsvBtn" style="display:none;">📥 Импорт CSV</button>
+    <input type="file" id="csvFileInput" accept=".csv" style="display:none;">
     <label style="display:inline-flex;align-items:center;gap:4px;font-size:14px;background:#e0f2f1;padding:4px 12px;border-radius:20px;cursor:pointer;">
       <input type="checkbox" id="confirmImportedTranslations"> Подтвердить импорт
+    </label>
+    <label style="display:inline-flex;align-items:center;gap:4px;font-size:14px;background:#e0f2f1;padding:4px 12px;border-radius:20px;cursor:pointer;">
+      <input type="checkbox" id="importByText" checked> Импорт .wts по тексту
     </label>
     <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts</button>
 
@@ -500,7 +507,10 @@
   const importBtn = document.getElementById('importBtn');
   const importTranslationBtn = document.getElementById('importTranslationBtn');
   const translationFileInput = document.getElementById('translationFileInput');
+  const importCsvBtn = document.getElementById('importCsvBtn');
+  const csvFileInput = document.getElementById('csvFileInput');
   const confirmImportedTranslations = document.getElementById('confirmImportedTranslations');
+  const importByText = document.getElementById('importByText');
   const exportBtn = document.getElementById('exportBtn');
   const refreshBtn = document.getElementById('refreshBtn');
   const filterOnlyRussian = document.getElementById('filterOnlyRussian');
@@ -582,6 +592,7 @@
       logoutBtn.style.display = 'none';
       importBtn.style.display = 'none';
       importTranslationBtn.style.display = 'none';
+      importCsvBtn.style.display = 'none';
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
       render();
@@ -600,11 +611,13 @@
     if (role === 'editor') {
       importBtn.style.display = 'inline-block';
       importTranslationBtn.style.display = 'inline-block';
+      importCsvBtn.style.display = 'inline-block';
       exportBtn.style.display = 'inline-block';
       confirmImportedTranslations.closest('label').style.display = 'inline-flex';
     } else {
       importBtn.style.display = 'none';
       importTranslationBtn.style.display = 'none';
+      importCsvBtn.style.display = 'none';
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
     }
@@ -682,6 +695,14 @@
       }
       return match;
     });
+  }
+
+  function cleanWtsText(text) {
+    if (!text) return '';
+    let cleaned = text.replace(/\|c[0-9a-fA-F]{6,8}/g, '');
+    cleaned = cleaned.replace(/\|r/g, '');
+    cleaned = cleaned.replace(/\s+/g, ' ').trim();
+    return cleaned;
   }
 
   // ========== ПОСТРОЕНИЕ ГРУПП ==========
@@ -854,7 +875,6 @@
           <button class="comment-save-btn" data-key="${safeKey}">Отправить</button>
         `;
 
-        // Заменяем input на textarea для перевода
         html += `
           <div class="entry ${groupClass}" data-key="${safeKey}" data-group='${JSON.stringify(item._groupMembers || [])}'>
             <span class="meta">#${key}</span>
@@ -880,8 +900,6 @@
       container.querySelectorAll('.translation-input').forEach(textarea => {
         textarea.removeEventListener('change', handleTranslationChange);
         textarea.addEventListener('change', handleTranslationChange);
-        // Также сохраняем при потере фокуса (change уже сработает)
-        // Можно добавить сохранение по Ctrl+Enter
         textarea.addEventListener('keydown', function(e) {
           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
@@ -899,8 +917,6 @@
         btn.removeEventListener('click', handleConfirmToggle);
         btn.addEventListener('click', handleConfirmToggle);
       });
-
-      // show-all-btn обрабатывается через делегирование
     } catch (err) {
       console.error('Ошибка при рендеринге:', err);
       container.innerHTML = `<div class="loader" style="color:#c62828;">Ошибка отображения: ${err.message}</div>`;
@@ -912,20 +928,7 @@
   function handleTranslationChange(e) {
     const textarea = e.currentTarget;
     const key = textarea.dataset.key;
-    const newTranslation = textarea.value; // сохраняем как есть, включая переносы
-    // Разрешаем пустой перевод? Нет, ранее требовали не пустой. Но можно разрешить пустой, чтобы пользователь мог удалить перевод.
-    // Однако фильтр "Без перевода" проверяет trim(), так что пустой перевод будет считаться отсутствующим.
-    // Оставим проверку на пустой только для предупреждения, но разрешим сохранять пустую строку.
-    // Если хотим запретить пустой, раскомментируйте.
-    /*
-    if (newTranslation.trim() === '') {
-      alert('Перевод не может быть пустым.');
-      const originalItem = allData.find(d => d.key === key);
-      textarea.value = originalItem?.translation || '';
-      return;
-    }
-    */
-
+    const newTranslation = textarea.value;
     const item = allData.find(d => d.key === key);
     if (!item) return;
     const user = getCurrentUserInfo();
@@ -1086,7 +1089,7 @@
       .catch(err => alert('Ошибка обновления подтверждения: ' + err.message));
   }
 
-  // ========== ИМПОРТ ОРИГИНАЛЬНЫХ СТРОК ==========
+  // ========== ПАРСИНГ .WTS (с комментариями) ==========
   function parseWTS(text) {
     const regex = /STRING\s+(\d+)\s*(?:\/\/([^\n]*))?\s*\{([\s\S]*?)\}/g;
     const entries = [];
@@ -1100,6 +1103,7 @@
     return entries;
   }
 
+  // ========== ИМПОРТ ОРИГИНАЛЬНОГО .WTS ==========
   function importWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1142,7 +1146,7 @@
     this.value = '';
   });
 
-  // ========== ИМПОРТ ПЕРЕВОДОВ ==========
+  // ========== ИМПОРТ ПЕРЕВОДОВ ИЗ .WTS (с опцией по тексту/номерам) ==========
   function importTranslations(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1154,44 +1158,78 @@
           return;
         }
 
-        const translationMap = {};
-        for (const item of parsed) {
-          translationMap[item.number] = item.content;
-        }
-
         const user = getCurrentUserInfo();
+        const confirm = confirmImportedTranslations.checked;
+        const byText = importByText.checked;
+
         const updates = {};
         let count = 0;
-        const confirm = confirmImportedTranslations.checked;
 
-        for (const existing of allData) {
-          const key = existing.key;
-          if (translationMap.hasOwnProperty(key)) {
-            const newTranslation = translationMap[key];
-            if (newTranslation && newTranslation.trim() !== '') {
-              const updateData = {
-                translation: newTranslation,
-                translationAuthor: user.uid,
-                translationAuthorName: user.displayName
-              };
-              if (confirm) {
-                updateData.confirmed = true;
-                updateData.confirmedBy = user.uid;
-                updateData.confirmedByName = user.displayName;
+        if (byText) {
+          // Режим по тексту: строим карту очищенный оригинал -> текст из файла (оригинал)
+          const textMap = {};
+          for (const item of parsed) {
+            const cleaned = cleanWtsText(item.content);
+            if (cleaned) {
+              textMap[cleaned] = item.content;
+            }
+          }
+          for (const existing of allData) {
+            const originalClean = cleanWtsText(existing.original);
+            if (textMap.hasOwnProperty(originalClean)) {
+              const newTranslation = textMap[originalClean];
+              if (newTranslation && newTranslation.trim() !== '') {
+                const updateData = {
+                  translation: newTranslation,
+                  translationAuthor: user.uid,
+                  translationAuthorName: user.displayName
+                };
+                if (confirm) {
+                  updateData.confirmed = true;
+                  updateData.confirmedBy = user.uid;
+                  updateData.confirmedByName = user.displayName;
+                }
+                updates[existing.key] = updateData;
+                count++;
               }
-              updates[key] = updateData;
-              count++;
+            }
+          }
+        } else {
+          // Режим по номерам
+          const translationMap = {};
+          for (const item of parsed) {
+            translationMap[item.number] = item.content;
+          }
+          for (const existing of allData) {
+            const key = existing.key;
+            if (translationMap.hasOwnProperty(key)) {
+              const newTranslation = translationMap[key];
+              if (newTranslation && newTranslation.trim() !== '') {
+                const updateData = {
+                  translation: newTranslation,
+                  translationAuthor: user.uid,
+                  translationAuthorName: user.displayName
+                };
+                if (confirm) {
+                  updateData.confirmed = true;
+                  updateData.confirmedBy = user.uid;
+                  updateData.confirmedByName = user.displayName;
+                }
+                updates[key] = updateData;
+                count++;
+              }
             }
           }
         }
 
         if (count === 0) {
-          alert('Не найдено совпадений по номерам STRING. Ни один перевод не обновлён.');
+          alert('Не найдено совпадений. Ни один перевод не обновлён.');
           return;
         }
 
+        const modeText = byText ? 'по тексту' : 'по номерам';
         const confirmMsg = confirm ? ' (будут помечены как подтверждённые)' : ' (статус подтверждения не изменится)';
-        if (!window.confirm(`Найдено ${count} совпадений. Обновить переводы для этих строк?${confirmMsg}`)) return;
+        if (!window.confirm(`Найдено ${count} совпадений (${modeText}). Обновить переводы для этих строк?${confirmMsg}`)) return;
 
         const promiseArray = [];
         for (const [key, data] of Object.entries(updates)) {
@@ -1227,6 +1265,116 @@
   importTranslationBtn.addEventListener('click', () => translationFileInput.click());
   translationFileInput.addEventListener('change', function(e) {
     if (this.files && this.files[0]) importTranslations(this.files[0]);
+    this.value = '';
+  });
+
+  // ========== ИМПОРТ ИЗ CSV ==========
+  function parseCSV(text) {
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+    if (lines.length === 0) return [];
+    const firstLine = lines[0];
+    const delimiter = firstLine.includes(';') ? ';' : ',';
+    const result = [];
+    for (const line of lines) {
+      const parts = line.split(delimiter);
+      if (parts.length >= 2) {
+        const col1 = parts[0].replace(/^"|"$/g, '').trim();
+        const col2 = parts.slice(1).join(delimiter).replace(/^"|"$/g, '').trim();
+        result.push({ original: col1, translation: col2 });
+      }
+    }
+    return result;
+  }
+
+  function importCSV(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        const text = e.target.result;
+        const rows = parseCSV(text);
+        if (rows.length === 0) {
+          alert('Не удалось распарсить CSV. Проверьте формат (первая колонка – оригинал, вторая – перевод).');
+          return;
+        }
+
+        const user = getCurrentUserInfo();
+        const confirm = confirmImportedTranslations.checked;
+
+        const translationMap = {};
+        for (const row of rows) {
+          const cleanOrig = cleanWtsText(row.original);
+          if (cleanOrig && row.translation) {
+            translationMap[cleanOrig] = row.translation;
+          }
+        }
+
+        const updates = {};
+        let count = 0;
+
+        for (const existing of allData) {
+          const originalClean = cleanWtsText(existing.original);
+          if (translationMap.hasOwnProperty(originalClean)) {
+            const newTranslation = translationMap[originalClean];
+            if (newTranslation && newTranslation.trim() !== '') {
+              const updateData = {
+                translation: newTranslation,
+                translationAuthor: user.uid,
+                translationAuthorName: user.displayName
+              };
+              if (confirm) {
+                updateData.confirmed = true;
+                updateData.confirmedBy = user.uid;
+                updateData.confirmedByName = user.displayName;
+              }
+              updates[existing.key] = updateData;
+              count++;
+            }
+          }
+        }
+
+        if (count === 0) {
+          alert('Не найдено совпадений по оригиналу. Ни один перевод не обновлён.');
+          return;
+        }
+
+        const confirmMsg = confirm ? ' (будут помечены как подтверждённые)' : ' (статус подтверждения не изменится)';
+        if (!window.confirm(`Найдено ${count} совпадений. Обновить переводы для этих строк?${confirmMsg}`)) return;
+
+        const promiseArray = [];
+        for (const [key, data] of Object.entries(updates)) {
+          promiseArray.push(stringsRef.child(key).update(data));
+        }
+        Promise.all(promiseArray)
+          .then(() => {
+            alert(`Обновлено переводов: ${count}`);
+            for (const [key, data] of Object.entries(updates)) {
+              const localItem = allData.find(d => d.key === key);
+              if (localItem) {
+                localItem.translation = data.translation;
+                localItem.translationAuthor = data.translationAuthor;
+                localItem.translationAuthorName = data.translationAuthorName;
+                if (confirm) {
+                  localItem.confirmed = data.confirmed;
+                  localItem.confirmedBy = data.confirmedBy;
+                  localItem.confirmedByName = data.confirmedByName;
+                }
+              }
+            }
+            render();
+          })
+          .catch(err => alert('Ошибка при обновлении переводов: ' + err.message));
+      } catch (err) {
+        alert('Ошибка при обработке CSV: ' + err.message);
+      }
+    };
+    reader.onerror = () => alert('Ошибка чтения файла');
+    reader.readAsText(file, 'UTF-8');
+  }
+
+  importCsvBtn.addEventListener('click', () => csvFileInput.click());
+  csvFileInput.addEventListener('change', function(e) {
+    if (this.files && this.files[0]) importCSV(this.files[0]);
     this.value = '';
   });
 
