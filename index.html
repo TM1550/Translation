@@ -8,7 +8,6 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <style>
-    /* все стили без изменений (такие же, как в предыдущей версии) */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       height: 100%;
@@ -360,6 +359,16 @@
       background: #4caf50;
     }
     .entry .inactive-btn.active:hover { background: #388e3c; }
+    .entry .similar-btn {
+      background: #6a1b9a;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 4px 12px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .entry .similar-btn:hover { background: #4a148c; }
     .entry .comment-section {
       grid-column: 1 / -1;
       margin-top: 6px;
@@ -462,7 +471,7 @@
     }
     .modal-box {
       background: white;
-      max-width: 600px;
+      max-width: 700px;
       width: 90%;
       max-height: 80vh;
       padding: 24px;
@@ -481,15 +490,17 @@
     }
     .modal-box .close-btn:hover { color: #333; }
     .modal-box h3 { margin-bottom: 12px; }
-    .modal-box .modal-comment {
-      padding: 6px 0;
+    .modal-box .modal-item {
+      margin-bottom: 12px;
+      padding-bottom: 8px;
       border-bottom: 1px solid #eee;
-      display: flex;
-      justify-content: space-between;
     }
-    .modal-box .modal-comment .modal-text { flex: 1; white-space: pre-wrap; word-break: break-word; }
-    .modal-box .modal-comment .modal-author { font-size: 12px; color: #666; margin-left: 12px; white-space: nowrap; }
-
+    .modal-box .modal-item .modal-original { font-weight: 500; }
+    .modal-box .modal-item .modal-translation { color: #555; font-size: 0.95em; margin-top: 4px; }
+    .modal-box .modal-item .modal-score { font-size: 0.8em; color: #888; margin-top: 2px; }
+    .modal-box .modal-item strong { background: #ffeb3b; padding: 0 2px; border-radius: 2px; }
+    .modal-box .modal-item .modal-header { display: flex; justify-content: space-between; }
+    .modal-box .modal-item .modal-header .modal-key { color: #888; font-size: 0.9em; }
     @media (max-width: 768px) {
       .entry {
         grid-template-columns: 1fr;
@@ -583,6 +594,15 @@
     </div>
   </div>
 
+  <!-- Модальное окно для похожих переводов -->
+  <div class="modal-overlay" id="similarModal">
+    <div class="modal-box">
+      <span class="close-btn" id="similarModalClose">&times;</span>
+      <h3 id="similarModalTitle">Похожие подтверждённые переводы</h3>
+      <div id="similarModalList"></div>
+    </div>
+  </div>
+
   <div class="status">
     <span id="connectionStatus">⏳ Подключение...</span>
     <span id="countStatus">0</span>
@@ -643,12 +663,17 @@
   const logoutBtn = document.getElementById('logoutBtn');
   const setNameBtn = document.getElementById('setNameBtn');
 
-  // Модальное окно
-  const modalOverlay = document.getElementById('commentsModal');
+  // Модальные окна
+  const commentsModal = document.getElementById('commentsModal');
   const modalCloseBtn = document.getElementById('modalCloseBtn');
   const modalTitle = document.getElementById('modalTitle');
   const modalCommentsList = document.getElementById('modalCommentsList');
   const modalKeySpan = document.getElementById('modalKey');
+
+  const similarModal = document.getElementById('similarModal');
+  const similarModalClose = document.getElementById('similarModalClose');
+  const similarModalTitle = document.getElementById('similarModalTitle');
+  const similarModalList = document.getElementById('similarModalList');
 
   // Состояние
   let allData = [];
@@ -971,6 +996,70 @@
       .catch(err => alert('Ошибка обновления статуса: ' + err.message));
   }
 
+  // ========== ПОИСК ПОХОЖИХ ПОДТВЕРЖДЁННЫХ ПЕРЕВОДОВ ==========
+  function findSimilarConfirmedTranslations(original, excludeKey, maxResults = 5) {
+    const words = text => text.toLowerCase().replace(/[^a-zа-яё\s]/g, '').split(/\s+/).filter(w => w.length > 2);
+    const currentWords = words(original);
+    if (currentWords.length === 0) return [];
+    const results = [];
+
+    for (const entry of allData) {
+      if (entry.key === excludeKey) continue;
+      if (!entry.confirmed) continue;
+      if (!entry.translation || entry.translation.trim() === '') continue;
+      const entryWords = words(entry.original);
+      const common = currentWords.filter(w => entryWords.includes(w));
+      if (common.length === 0) continue;
+      const union = new Set([...currentWords, ...entryWords]);
+      const score = common.length / union.size;
+      results.push({
+        key: entry.key,
+        original: entry.original,
+        translation: entry.translation,
+        commonWords: common,
+        score: score
+      });
+    }
+    results.sort((a, b) => b.score - a.score);
+    return results.slice(0, maxResults);
+  }
+
+  function showSimilarTranslations(key) {
+    const item = allData.find(d => d.key === key);
+    if (!item) return;
+    const similar = findSimilarConfirmedTranslations(item.original, key);
+    if (similar.length === 0) {
+      alert('Нет похожих подтверждённых переводов.');
+      return;
+    }
+    similarModalTitle.textContent = `Похожие подтверждённые переводы для #${key}`;
+    let html = '';
+    for (const s of similar) {
+      // Разбиваем оригинал на слова и выделяем общие
+      const words = s.original.split(/\s+/);
+      const highlighted = words.map(w => {
+        // удаляем знаки препинания для сравнения
+        const clean = w.replace(/[^a-zа-яё0-9]/gi, '');
+        if (s.commonWords.includes(clean.toLowerCase())) {
+          return `<strong>${escapeHtml(w)}</strong>`;
+        }
+        return escapeHtml(w);
+      }).join(' ');
+      html += `
+        <div class="modal-item">
+          <div class="modal-header">
+            <span class="modal-key">#${s.key}</span>
+            <span class="modal-score">Сходство: ${(s.score * 100).toFixed(0)}%</span>
+          </div>
+          <div class="modal-original">${highlighted}</div>
+          <div class="modal-translation">Перевод: ${escapeHtml(s.translation)}</div>
+        </div>
+      `;
+    }
+    similarModalList.innerHTML = html;
+    similarModal.classList.add('active');
+  }
+
   // ========== РЕНДЕРИНГ ==========
   function render() {
     try {
@@ -1056,6 +1145,9 @@
           inactiveButton = `<button class="${btnClass}" data-key="${safeKey}">${label}</button>`;
         }
 
+        // Кнопка "Похожие" (доступна всем)
+        const similarButton = `<button class="similar-btn" data-key="${safeKey}">🔍 Похожие</button>`;
+
         // Комментарии
         let commentHtml = '';
         if (wtsComment) {
@@ -1104,6 +1196,7 @@
               ${confirmedDisplay}
               ${confirmButton}
               ${inactiveButton}
+              ${similarButton}
             </div>
           </div>
         `;
@@ -1150,6 +1243,11 @@
         btn.removeEventListener('click', handleInactiveToggle);
         btn.addEventListener('click', handleInactiveToggle);
       });
+
+      container.querySelectorAll('.similar-btn').forEach(btn => {
+        btn.removeEventListener('click', handleSimilar);
+        btn.addEventListener('click', handleSimilar);
+      });
     } catch (err) {
       console.error('Ошибка при рендеринге:', err);
       container.innerHTML = `<div class="loader" style="color:#c62828;">Ошибка отображения: ${err.message}</div>`;
@@ -1185,6 +1283,12 @@
     const btn = e.currentTarget;
     const key = btn.dataset.key;
     toggleInactive(key);
+  }
+
+  function handleSimilar(e) {
+    const btn = e.currentTarget;
+    const key = btn.dataset.key;
+    showSimilarTranslations(key);
   }
 
   // ========== СОХРАНЕНИЕ КОММЕНТАРИЯ ==========
@@ -1247,7 +1351,7 @@
       `;
     }
     modalCommentsList.innerHTML = listHtml;
-    modalOverlay.classList.add('active');
+    commentsModal.classList.add('active');
   }
 
   container.addEventListener('click', function(e) {
@@ -1260,11 +1364,19 @@
     }
   });
 
+  // Закрытие модальных окон
   modalCloseBtn.addEventListener('click', () => {
-    modalOverlay.classList.remove('active');
+    commentsModal.classList.remove('active');
   });
-  modalOverlay.addEventListener('click', (e) => {
-    if (e.target === modalOverlay) modalOverlay.classList.remove('active');
+  commentsModal.addEventListener('click', (e) => {
+    if (e.target === commentsModal) commentsModal.classList.remove('active');
+  });
+
+  similarModalClose.addEventListener('click', () => {
+    similarModal.classList.remove('active');
+  });
+  similarModal.addEventListener('click', (e) => {
+    if (e.target === similarModal) similarModal.classList.remove('active');
   });
 
   // ========== ПОДТВЕРЖДЕНИЕ ==========
@@ -1635,15 +1747,13 @@
     const data = snapshot.val();
     if (data && data.importedNumbers) {
       importedNumbers = data.importedNumbers;
-      // Если фильтр включён, перерисовываем список
       if (filterByImported.checked) {
         render();
       }
     }
   });
 
-  // ========== ЗАГРУЗКА МЕТАДАННЫХ ПРИ СТАРТЕ (уже не нужна отдельно, т.к. слушатель сработает) ==========
-  // Оставляем для инициализации чекбокса, если номера уже есть
+  // ========== ЗАГРУЗКА МЕТАДАННЫХ ПРИ СТАРТЕ ==========
   metadataRef.once('value', (snapshot) => {
     const data = snapshot.val();
     if (data && data.importedNumbers) {
