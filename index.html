@@ -8,7 +8,6 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <style>
-    /* (стили без изменений, оставлены для краткости) */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -208,6 +207,13 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .entry .translation-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 8px;
+      width: 100%;
+    }
     .entry .translation-input {
       flex: 2 1 200px;
       padding: 6px 10px;
@@ -224,6 +230,17 @@
       border-color: #0d47a1;
       outline: none;
     }
+    .entry .save-translation-btn {
+      background: #0d47a1;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 12px;
+      cursor: pointer;
+      font-size: 13px;
+      align-self: flex-start;
+    }
+    .entry .save-translation-btn:hover { background: #1565c0; }
     .entry .group-info {
       font-size: 13px;
       color: #e65100;
@@ -491,8 +508,8 @@
   const db = firebase.database();
   const auth = firebase.auth();
   const stringsRef = db.ref('strings');
+  const metadataRef = db.ref('metadata');
   const usersRef = db.ref('users');
-  const metadataRef = db.ref('metadata/importedNumbers'); // для хранения номеров последнего импорта
 
   // DOM элементы
   const container = document.getElementById('dictionaryContainer');
@@ -542,7 +559,7 @@
   let currentDisplayName = '';
   let currentUserRole = 'translator';
 
-  // Номера строк из последнего импортированного WTS (хранятся в базе)
+  // Номера строк из последнего импортированного WTS (загружаем из metadata)
   let importedNumbers = [];
 
   // ========== АВТОРИЗАЦИЯ ==========
@@ -644,20 +661,6 @@
   });
 
   auth.onAuthStateChanged(user => { updateAuthUI(user); });
-
-  // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В МЕТАДАННЫХ (номера последнего импорта) ==========
-  metadataRef.on('value', (snapshot) => {
-    const data = snapshot.val();
-    if (data && Array.isArray(data)) {
-      importedNumbers = data;
-      filterByImported.checked = true;
-    } else {
-      importedNumbers = [];
-      filterByImported.checked = false;
-    }
-    // Не вызываем render() здесь, т.к. данные strings ещё могут не загрузиться.
-    // render() вызовется при изменении stringsRef.
-  });
 
   // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
@@ -790,6 +793,67 @@
     return items.slice(start, start + itemsPerPage);
   }
 
+  // ========== ОСНОВНАЯ ЛОГИКА СОХРАНЕНИЯ ПЕРЕВОДА ==========
+  function saveTranslation(key, newTranslation) {
+    const item = allData.find(d => d.key === key);
+    if (!item) return;
+    const user = getCurrentUserInfo();
+
+    const isTranslationEmpty = newTranslation.trim() === '';
+
+    // Функция для подготовки данных для одной записи
+    function prepareUpdate(translation, authorUid, authorName) {
+      const update = {
+        translation: translation,
+        translationAuthor: authorUid,
+        translationAuthorName: authorName,
+        confirmed: false,
+        confirmedBy: '',
+        confirmedByName: ''
+      };
+      // Если перевод пустой, сбрасываем автора
+      if (translation.trim() === '') {
+        update.translationAuthor = '';
+        update.translationAuthorName = '';
+      }
+      return update;
+    }
+
+    if (groupMode.checked) {
+      const pattern = makePattern(item.original);
+      const members = allData.filter(m => makePattern(m.original) === pattern);
+      if (members.length > 1) {
+        const updates = {};
+        for (const member of members) {
+          let memberTranslation;
+          if (member.key === key) {
+            memberTranslation = newTranslation;
+          } else {
+            memberTranslation = applyTranslationToMember(newTranslation, member.original);
+          }
+          const localItem = allData.find(d => d.key === member.key);
+          if (localItem) {
+            localItem.translation = memberTranslation;
+            localItem.translationAuthor = isTranslationEmpty ? '' : user.uid;
+            localItem.translationAuthorName = isTranslationEmpty ? '' : user.displayName;
+            localItem.confirmed = false;
+            localItem.confirmedBy = '';
+            localItem.confirmedByName = '';
+          }
+          updates[member.key] = prepareUpdate(memberTranslation, isTranslationEmpty ? '' : user.uid, isTranslationEmpty ? '' : user.displayName);
+        }
+        for (const [k, val] of Object.entries(updates)) {
+          stringsRef.child(k).update(val).catch(err => alert('Ошибка сохранения для #' + k + ': ' + err.message));
+        }
+        render();
+        return;
+      }
+    }
+
+    const updateData = prepareUpdate(newTranslation, isTranslationEmpty ? '' : user.uid, isTranslationEmpty ? '' : user.displayName);
+    stringsRef.child(key).update(updateData).catch(err => alert('Ошибка сохранения: ' + err.message));
+  }
+
   // ========== РЕНДЕРИНГ ==========
   function render() {
     try {
@@ -892,11 +956,19 @@
           <button class="comment-save-btn" data-key="${safeKey}">Отправить</button>
         `;
 
+        // Поле перевода с кнопкой
+        const translationRow = `
+          <div class="translation-row">
+            <textarea class="translation-input" rows="2" data-key="${safeKey}" placeholder="Введите перевод... (Enter для переноса)">${escapeHtml(translation)}</textarea>
+            <button class="save-translation-btn" data-key="${safeKey}">Сохранить перевод</button>
+          </div>
+        `;
+
         html += `
           <div class="entry ${groupClass}" data-key="${safeKey}" data-group='${JSON.stringify(item._groupMembers || [])}'>
             <span class="meta">#${key}</span>
             <div class="original">${escapeHtml(original)}</div>
-            <textarea class="translation-input" rows="2" data-key="${safeKey}" placeholder="Введите перевод... (Enter для переноса)">${escapeHtml(translation)}</textarea>
+            ${translationRow}
             ${groupInfo ? `<span class="group-info">${groupInfo}</span>` : ''}
             <div class="author-info" style="flex:1 1 100%;">
               ${translationAuthorDisplay ? `<span>${translationAuthorDisplay}</span>` : ''}
@@ -913,23 +985,25 @@
       container.innerHTML = html;
       countStatus.textContent = totalDisplay;
 
-      // Обработчики для textarea
-      container.querySelectorAll('.translation-input').forEach(textarea => {
-        textarea.removeEventListener('change', handleTranslationChange);
-        textarea.addEventListener('change', handleTranslationChange);
-        textarea.addEventListener('keydown', function(e) {
-          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault();
-            this.blur(); // вызывает событие change
-          }
-        });
+      // Обработчики для кнопок сохранения перевода
+      container.querySelectorAll('.save-translation-btn').forEach(btn => {
+        btn.removeEventListener('click', handleSaveTranslation);
+        btn.addEventListener('click', handleSaveTranslation);
       });
 
+      // Обработчики для textarea: Ctrl+Enter для сохранения
+      container.querySelectorAll('.translation-input').forEach(textarea => {
+        textarea.removeEventListener('keydown', handleTextareaKeydown);
+        textarea.addEventListener('keydown', handleTextareaKeydown);
+      });
+
+      // Обработчики для комментариев
       container.querySelectorAll('.comment-save-btn').forEach(btn => {
         btn.removeEventListener('click', handleCommentSave);
         btn.addEventListener('click', handleCommentSave);
       });
 
+      // Обработчики для подтверждения
       container.querySelectorAll('.confirm-btn').forEach(btn => {
         btn.removeEventListener('click', handleConfirmToggle);
         btn.addEventListener('click', handleConfirmToggle);
@@ -942,52 +1016,25 @@
 
   // ========== ОБРАБОТЧИКИ ==========
 
-  function handleTranslationChange(e) {
-    const textarea = e.currentTarget;
-    const key = textarea.dataset.key;
+  // Сохранение по кнопке
+  function handleSaveTranslation(e) {
+    const btn = e.currentTarget;
+    const key = btn.dataset.key;
+    const entry = btn.closest('.entry');
+    const textarea = entry.querySelector('.translation-input');
     const newTranslation = textarea.value;
-    const item = allData.find(d => d.key === key);
-    if (!item) return;
-    const user = getCurrentUserInfo();
+    saveTranslation(key, newTranslation);
+  }
 
-    if (groupMode.checked) {
-      const pattern = makePattern(item.original);
-      const members = allData.filter(m => makePattern(m.original) === pattern);
-      if (members.length > 1) {
-        const updates = {};
-        for (const member of members) {
-          let memberTranslation;
-          if (member.key === key) {
-            memberTranslation = newTranslation;
-          } else {
-            memberTranslation = applyTranslationToMember(newTranslation, member.original);
-          }
-          const localItem = allData.find(d => d.key === member.key);
-          if (localItem) {
-            localItem.translation = memberTranslation;
-            localItem.translationAuthor = user.uid;
-            localItem.translationAuthorName = user.displayName;
-          }
-          updates[member.key] = {
-            translation: memberTranslation,
-            translationAuthor: user.uid,
-            translationAuthorName: user.displayName
-          };
-        }
-        for (const [k, val] of Object.entries(updates)) {
-          stringsRef.child(k).update(val).catch(err => alert('Ошибка сохранения для #' + k + ': ' + err.message));
-        }
-        render();
-        return;
-      }
+  // Ctrl+Enter в textarea
+  function handleTextareaKeydown(e) {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      const textarea = e.currentTarget;
+      const key = textarea.dataset.key;
+      const newTranslation = textarea.value;
+      saveTranslation(key, newTranslation);
     }
-
-    const updateData = {
-      translation: newTranslation,
-      translationAuthor: user.uid,
-      translationAuthorName: user.displayName
-    };
-    stringsRef.child(key).update(updateData).catch(err => alert('Ошибка сохранения: ' + err.message));
   }
 
   // ========== СОХРАНЕНИЕ КОММЕНТАРИЯ ==========
@@ -1122,7 +1169,7 @@
     return entries;
   }
 
-  // ========== ИМПОРТ ОРИГИНАЛЬНОГО .WTS (с сохранением номеров в метаданные) ==========
+  // ========== ИМПОРТ ОРИГИНАЛЬНОГО .WTS (с сохранением номеров в metadata) ==========
   function importWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1198,16 +1245,17 @@
 
         stringsRef.update(updates)
           .then(() => {
-            // Сохраняем номера импортированных строк в метаданные
+            // Сохраняем номера в metadata
             const numbers = parsed.map(item => item.number);
-            return metadataRef.set(numbers);
-          })
-          .then(() => {
-            importedNumbers = parsed.map(item => item.number);
-            filterByImported.checked = true;
-            currentPage = 0;
-            alert(`Импортировано ${parsed.length} строк. Включён фильтр "Только загруженные".`);
-            render();
+            metadataRef.set({ importedNumbers: numbers })
+              .then(() => {
+                importedNumbers = numbers;
+                filterByImported.checked = true;
+                currentPage = 0;
+                alert(`Импортировано ${parsed.length} строк. Включён фильтр "Только загруженные".`);
+                render();
+              })
+              .catch(err => console.warn('Не удалось сохранить метаданные:', err));
           })
           .catch(err => {
             console.error('Ошибка импорта:', err);
@@ -1428,6 +1476,16 @@
 
   refreshBtn.addEventListener('click', () => {
     stringsRef.once('value', () => render());
+  });
+
+  // ========== ЗАГРУЗКА METADATA ПРИ СТАРТЕ ==========
+  metadataRef.once('value', (snapshot) => {
+    const data = snapshot.val();
+    if (data && data.importedNumbers) {
+      importedNumbers = data.importedNumbers;
+      filterByImported.checked = true;
+      render();
+    }
   });
 
   // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В БАЗЕ ==========
