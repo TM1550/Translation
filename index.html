@@ -86,6 +86,8 @@
     .toolbar .import-btn:hover { background: #bf360c; }
     .toolbar .import-csv-btn { background: #4a148c; }
     .toolbar .import-csv-btn:hover { background: #6a1b9a; }
+    .toolbar .show-all-btn { background: #ad1457; }
+    .toolbar .show-all-btn:hover { background: #880e4f; }
     #fileInput, #csvFileInput { display: none; }
     .filter-group {
       display: flex;
@@ -422,6 +424,7 @@
     <label style="display:inline-flex;align-items:center;gap:4px;font-size:14px;background:#e0f2f1;padding:4px 12px;border-radius:20px;cursor:pointer;">
       <input type="checkbox" id="confirmImportedTranslations"> Подтвердить импорт
     </label>
+    <button class="show-all-btn" id="showAllBtn" style="display:none;">📋 Показать все</button>
     <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts</button>
 
     <div class="filter-group">
@@ -501,6 +504,7 @@
   const importCsvBtn = document.getElementById('importCsvBtn');
   const csvFileInput = document.getElementById('csvFileInput');
   const confirmImportedTranslations = document.getElementById('confirmImportedTranslations');
+  const showAllBtn = document.getElementById('showAllBtn');
   const exportBtn = document.getElementById('exportBtn');
   const refreshBtn = document.getElementById('refreshBtn');
   const filterOnlyRussian = document.getElementById('filterOnlyRussian');
@@ -537,6 +541,10 @@
   let currentUser = null;
   let currentDisplayName = '';
   let currentUserRole = 'translator';
+
+  // Фильтр по импортированным номерам
+  let filterByImported = false;
+  let importedNumbers = [];
 
   // ========== АВТОРИЗАЦИЯ ==========
 
@@ -712,6 +720,12 @@
   // ========== ЛОГИКА ФИЛЬТРАЦИИ ==========
   function getFilteredData() {
     let filtered = allData;
+
+    // Фильтр по импортированным номерам (если включён)
+    if (filterByImported && importedNumbers.length > 0) {
+      filtered = filtered.filter(item => importedNumbers.includes(item.key));
+    }
+
     const searchTerm = searchInput.value.trim().toLowerCase();
     if (searchTerm !== '') {
       filtered = filtered.filter(item => {
@@ -787,10 +801,16 @@
       const filteredCount = getFilteredData().length;
       const searchTerm = searchInput.value.trim();
       let statsText = `Всего: ${totalAll} | Отфильтровано: ${filteredCount} | Показано: ${totalDisplay}`;
+      if (filterByImported && importedNumbers.length > 0) {
+        statsText += ` (только загруженные)`;
+      }
       if (searchTerm !== '') {
         statsText += ` | Поиск: "${searchTerm}"`;
       }
       statsSpan.textContent = statsText;
+
+      // Показываем кнопку "Показать все", если фильтр включён
+      showAllBtn.style.display = (filterByImported && importedNumbers.length > 0) ? 'inline-block' : 'none';
 
       if (totalDisplay === 0) {
         container.innerHTML = '<div class="loader">Нет записей, соответствующих фильтрам.</div>';
@@ -1092,7 +1112,7 @@
     return entries;
   }
 
-  // ========== ИМПОРТ ОРИГИНАЛЬНОГО .WTS (с построением карты из allData) ==========
+  // ========== ИМПОРТ ОРИГИНАЛЬНОГО .WTS (с фильтром по импортированным) ==========
   function importWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1168,7 +1188,13 @@
 
         stringsRef.update(updates)
           .then(() => {
-            alert(`Импортировано ${parsed.length} строк. Переводы применены по совпадению оригиналов.`);
+            // Сохраняем номера импортированных строк и включаем фильтр
+            importedNumbers = parsed.map(item => item.number);
+            filterByImported = true;
+            // Сбрасываем текущую страницу на первую
+            currentPage = 0;
+            alert(`Импортировано ${parsed.length} строк. Показаны только строки из этого файла.`);
+            render();
           })
           .catch(err => {
             console.error('Ошибка импорта:', err);
@@ -1186,6 +1212,14 @@
   fileInput.addEventListener('change', function(e) {
     if (this.files && this.files[0]) importWTS(this.files[0]);
     this.value = '';
+  });
+
+  // ========== КНОПКА "ПОКАЗАТЬ ВСЕ" ==========
+  showAllBtn.addEventListener('click', function() {
+    filterByImported = false;
+    importedNumbers = [];
+    currentPage = 0;
+    render();
   });
 
   // ========== ИМПОРТ ИЗ CSV ==========
