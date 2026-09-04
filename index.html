@@ -8,6 +8,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <style>
+    /* все стили без изменений (как в предыдущей версии) */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       height: 100%;
@@ -32,7 +33,7 @@
       box-shadow: 0 8px 24px rgba(0,0,0,0.1);
       display: flex;
       flex-direction: column;
-      height: calc(100vh - 32px); /* отступы body */
+      height: calc(100vh - 32px);
       max-height: calc(100vh - 32px);
       overflow: hidden;
     }
@@ -219,10 +220,22 @@
       border-left: 4px solid #0d47a1;
       margin: 4px 8px;
       align-items: start;
+      transition: background 0.2s;
+    }
+    .entry.inactive {
+      background: #f0f0f0;
+      opacity: 0.7;
+    }
+    .entry.inactive .original {
+      text-decoration: line-through;
+      color: #999;
     }
     .entry.group-header {
       border-left-color: #e65100;
       background: #fff8e1;
+    }
+    .entry.group-header.inactive {
+      background: #f0e8d0;
     }
     .entry .left-col {
       display: flex;
@@ -297,6 +310,10 @@
       font-size: 12px;
       color: #666;
       margin: 2px 0;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
     }
     .entry .confirmed-badge {
       font-size: 13px;
@@ -329,6 +346,20 @@
       background: #b0bec5;
       cursor: not-allowed;
     }
+    .entry .inactive-btn {
+      background: #795548;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 4px 12px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .entry .inactive-btn:hover { background: #5d4037; }
+    .entry .inactive-btn.active {
+      background: #4caf50;
+    }
+    .entry .inactive-btn.active:hover { background: #388e3c; }
     .entry .comment-section {
       grid-column: 1 / -1;
       margin-top: 6px;
@@ -514,6 +545,7 @@
       <label><input type="checkbox" id="filterHideEditorSuffix"> Скрыть с EditorSuffix</label>
       <label><input type="checkbox" id="filterUnconfirmed"> Неподтверждённые переводы</label>
       <label><input type="checkbox" id="filterByImported"> Только загруженные</label>
+      <label id="filterInactiveLabel"><input type="checkbox" id="filterInactive"> Скрыть неактивные</label>
       <label><input type="checkbox" id="groupMode"> Группировать по шаблону</label>
     </div>
 
@@ -594,6 +626,7 @@
   const filterHideEditorSuffix = document.getElementById('filterHideEditorSuffix');
   const filterUnconfirmed = document.getElementById('filterUnconfirmed');
   const filterByImported = document.getElementById('filterByImported');
+  const filterInactive = document.getElementById('filterInactive');
   const groupMode = document.getElementById('groupMode');
   const perPageSelect = document.getElementById('perPage');
   const prevPageBtn = document.getElementById('prevPage');
@@ -696,6 +729,7 @@
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
     }
+    // Фильтр «Скрыть неактивные» виден всем, поэтому не меняем его видимость
     render();
   }
 
@@ -803,6 +837,11 @@
 
     if (filterByImported.checked && importedNumbers.length > 0) {
       filtered = filtered.filter(item => importedNumbers.includes(item.key));
+    }
+
+    // Фильтр «Скрыть неактивные» доступен всем
+    if (filterInactive.checked) {
+      filtered = filtered.filter(item => !item.inactive);
     }
 
     const searchTerm = searchInput.value.trim().toLowerCase();
@@ -921,6 +960,19 @@
     stringsRef.child(key).update(updateData).catch(err => alert('Ошибка сохранения: ' + err.message));
   }
 
+  // ========== ПЕРЕКЛЮЧЕНИЕ НЕАКТИВНОСТИ ==========
+  function toggleInactive(key) {
+    const item = allData.find(d => d.key === key);
+    if (!item) return;
+    const newState = !item.inactive;
+    stringsRef.child(key).update({ inactive: newState })
+      .then(() => {
+        item.inactive = newState;
+        render();
+      })
+      .catch(err => alert('Ошибка обновления статуса: ' + err.message));
+  }
+
   // ========== РЕНДЕРИНГ ==========
   function render() {
     try {
@@ -971,6 +1023,7 @@
         const translationAuthorName = item.translationAuthorName || '';
         const confirmed = item.confirmed || false;
         const confirmedByName = item.confirmedByName || '';
+        const inactive = item.inactive || false;
         const safeKey = key.replace(/"/g, '&quot;');
         let groupInfo = '';
         if (groupMode.checked && item._groupMembers && item._groupMembers.length > 1) {
@@ -997,6 +1050,14 @@
           confirmedDisplay = `<span class="confirmed-badge">✅ Подтверждено${confirmedByName ? ' (' + escapeHtml(confirmedByName) + ')' : ''}</span>`;
         }
 
+        // Кнопка неактивности (только для редакторов)
+        let inactiveButton = '';
+        if (user.role === 'editor') {
+          const label = inactive ? 'Активировать' : 'Сделать неактивной';
+          const btnClass = inactive ? 'inactive-btn active' : 'inactive-btn';
+          inactiveButton = `<button class="${btnClass}" data-key="${safeKey}">${label}</button>`;
+        }
+
         // Комментарии
         let commentHtml = '';
         if (wtsComment) {
@@ -1021,6 +1082,11 @@
           <button class="comment-save-btn" data-key="${safeKey}">Отправить</button>
         `;
 
+        // Формируем классы для entry
+        let entryClasses = 'entry';
+        if (inactive) entryClasses += ' inactive';
+        if (groupMode.checked && item._groupMembers && item._groupMembers.length > 1) entryClasses += ' group-header';
+
         const leftColHtml = `
           <div class="left-col">
             <div class="meta">#${key}</div>
@@ -1039,12 +1105,13 @@
               ${translationAuthorDisplay ? `<span>${translationAuthorDisplay}</span>` : ''}
               ${confirmedDisplay}
               ${confirmButton}
+              ${inactiveButton}
             </div>
           </div>
         `;
 
         html += `
-          <div class="entry ${groupMode.checked && item._groupMembers && item._groupMembers.length > 1 ? 'group-header' : ''}" data-key="${safeKey}" data-group='${JSON.stringify(item._groupMembers || [])}'>
+          <div class="${entryClasses}" data-key="${safeKey}" data-group='${JSON.stringify(item._groupMembers || [])}'>
             ${leftColHtml}
             ${rightColHtml}
             <div class="comment-section">
@@ -1080,6 +1147,11 @@
         btn.removeEventListener('click', handleConfirmToggle);
         btn.addEventListener('click', handleConfirmToggle);
       });
+
+      container.querySelectorAll('.inactive-btn').forEach(btn => {
+        btn.removeEventListener('click', handleInactiveToggle);
+        btn.addEventListener('click', handleInactiveToggle);
+      });
     } catch (err) {
       console.error('Ошибка при рендеринге:', err);
       container.innerHTML = `<div class="loader" style="color:#c62828;">Ошибка отображения: ${err.message}</div>`;
@@ -1109,6 +1181,12 @@
       const newTranslation = textarea.value;
       saveTranslation(key, newTranslation);
     }
+  }
+
+  function handleInactiveToggle(e) {
+    const btn = e.currentTarget;
+    const key = btn.dataset.key;
+    toggleInactive(key);
   }
 
   // ========== СОХРАНЕНИЕ КОММЕНТАРИЯ ==========
@@ -1281,6 +1359,7 @@
           let confirmed = false;
           let confirmedBy = '';
           let confirmedByName = '';
+          let inactive = false;
 
           if (existing) {
             if (existing.translation && existing.translation.trim() !== '') {
@@ -1296,6 +1375,7 @@
                 translation = translationDict[cleanOrig];
               }
             }
+            inactive = existing.inactive || false;
           } else {
             const cleanOrig = cleanWtsText(newOriginal);
             if (translationDict[cleanOrig]) {
@@ -1312,7 +1392,8 @@
             userComments: existing ? (existing.userComments || []) : [],
             confirmed: confirmed || false,
             confirmedBy: confirmedBy || '',
-            confirmedByName: confirmedByName || ''
+            confirmedByName: confirmedByName || '',
+            inactive: inactive || false
           };
         }
 
@@ -1544,6 +1625,7 @@
   filterHideEditorSuffix.addEventListener('change', () => { currentPage = 0; render(); });
   filterUnconfirmed.addEventListener('change', () => { currentPage = 0; render(); });
   filterByImported.addEventListener('change', () => { currentPage = 0; render(); });
+  filterInactive.addEventListener('change', () => { currentPage = 0; render(); });
   groupMode.addEventListener('change', () => { currentPage = 0; render(); });
 
   refreshBtn.addEventListener('click', () => {
@@ -1585,7 +1667,8 @@
         userComments: Array.isArray(userComments) ? userComments : [],
         confirmed: entry.confirmed || false,
         confirmedBy: entry.confirmedBy || '',
-        confirmedByName: entry.confirmedByName || ''
+        confirmedByName: entry.confirmedByName || '',
+        inactive: entry.inactive || false
       };
     });
     render();
