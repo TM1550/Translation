@@ -8,6 +8,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <style>
+    /* (стили без изменений, оставлены для краткости) */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -491,6 +492,7 @@
   const auth = firebase.auth();
   const stringsRef = db.ref('strings');
   const usersRef = db.ref('users');
+  const metadataRef = db.ref('metadata/importedNumbers'); // для хранения номеров последнего импорта
 
   // DOM элементы
   const container = document.getElementById('dictionaryContainer');
@@ -540,7 +542,7 @@
   let currentDisplayName = '';
   let currentUserRole = 'translator';
 
-  // Номера строк из последнего импортированного WTS
+  // Номера строк из последнего импортированного WTS (хранятся в базе)
   let importedNumbers = [];
 
   // ========== АВТОРИЗАЦИЯ ==========
@@ -642,6 +644,20 @@
   });
 
   auth.onAuthStateChanged(user => { updateAuthUI(user); });
+
+  // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В МЕТАДАННЫХ (номера последнего импорта) ==========
+  metadataRef.on('value', (snapshot) => {
+    const data = snapshot.val();
+    if (data && Array.isArray(data)) {
+      importedNumbers = data;
+      filterByImported.checked = true;
+    } else {
+      importedNumbers = [];
+      filterByImported.checked = false;
+    }
+    // Не вызываем render() здесь, т.к. данные strings ещё могут не загрузиться.
+    // render() вызовется при изменении stringsRef.
+  });
 
   // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 
@@ -1106,7 +1122,7 @@
     return entries;
   }
 
-  // ========== ИМПОРТ ОРИГИНАЛЬНОГО .WTS (с включением фильтра) ==========
+  // ========== ИМПОРТ ОРИГИНАЛЬНОГО .WTS (с сохранением номеров в метаданные) ==========
   function importWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1182,7 +1198,11 @@
 
         stringsRef.update(updates)
           .then(() => {
-            // Сохраняем номера и включаем чекбокс фильтра
+            // Сохраняем номера импортированных строк в метаданные
+            const numbers = parsed.map(item => item.number);
+            return metadataRef.set(numbers);
+          })
+          .then(() => {
             importedNumbers = parsed.map(item => item.number);
             filterByImported.checked = true;
             currentPage = 0;
