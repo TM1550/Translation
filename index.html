@@ -8,7 +8,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <style>
-    /* все стили без изменений (как в предыдущей версии) */
+    /* все стили без изменений (такие же, как в предыдущей версии) */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       height: 100%;
@@ -545,7 +545,7 @@
       <label><input type="checkbox" id="filterHideEditorSuffix"> Скрыть с EditorSuffix</label>
       <label><input type="checkbox" id="filterUnconfirmed"> Неподтверждённые переводы</label>
       <label><input type="checkbox" id="filterByImported"> Только загруженные</label>
-      <label id="filterInactiveLabel"><input type="checkbox" id="filterInactive"> Скрыть неактивные</label>
+      <label><input type="checkbox" id="filterInactive"> Скрыть неактивные</label>
       <label><input type="checkbox" id="groupMode"> Группировать по шаблону</label>
     </div>
 
@@ -729,7 +729,6 @@
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
     }
-    // Фильтр «Скрыть неактивные» виден всем, поэтому не меняем его видимость
     render();
   }
 
@@ -839,7 +838,6 @@
       filtered = filtered.filter(item => importedNumbers.includes(item.key));
     }
 
-    // Фильтр «Скрыть неактивные» доступен всем
     if (filterInactive.checked) {
       filtered = filtered.filter(item => !item.inactive);
     }
@@ -1632,7 +1630,20 @@
     stringsRef.once('value', () => render());
   });
 
-  // ========== ЗАГРУЗКА METADATA ПРИ СТАРТЕ ==========
+  // ========== СЛУШАТЕЛЬ МЕТАДАННЫХ (РЕАЛЬНОЕ ВРЕМЯ) ==========
+  metadataRef.on('value', (snapshot) => {
+    const data = snapshot.val();
+    if (data && data.importedNumbers) {
+      importedNumbers = data.importedNumbers;
+      // Если фильтр включён, перерисовываем список
+      if (filterByImported.checked) {
+        render();
+      }
+    }
+  });
+
+  // ========== ЗАГРУЗКА МЕТАДАННЫХ ПРИ СТАРТЕ (уже не нужна отдельно, т.к. слушатель сработает) ==========
+  // Оставляем для инициализации чекбокса, если номера уже есть
   metadataRef.once('value', (snapshot) => {
     const data = snapshot.val();
     if (data && data.importedNumbers) {
