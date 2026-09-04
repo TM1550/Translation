@@ -489,7 +489,6 @@
   const db = firebase.database();
   const auth = firebase.auth();
   const stringsRef = db.ref('strings');
-  const translationsRef = db.ref('translations');
   const usersRef = db.ref('users');
 
   // DOM элементы
@@ -1085,28 +1084,15 @@
     while ((match = regex.exec(text)) !== null) {
       const number = match[1];
       const comment = (match[2] || '').trim();
-      const content = match[3]; // сохраняем как есть, включая пробелы и переносы
-      if (content.trim() !== '') { // проверка на пустые строки
+      const content = match[3];
+      if (content.trim() !== '') {
         entries.push({ number, comment, content });
       }
     }
     return entries;
   }
 
-  // ========== ОБНОВЛЕНИЕ СЛОВАРЯ ПЕРЕВОДОВ ==========
-  function updateTranslationsDictionary() {
-    const dict = {};
-    for (const entry of allData) {
-      const cleanOrig = cleanWtsText(entry.original);
-      const translation = entry.translation || '';
-      if (cleanOrig && translation.trim() !== '') {
-        dict[cleanOrig] = translation;
-      }
-    }
-    return translationsRef.set(dict).catch(err => console.error('Ошибка обновления словаря переводов:', err));
-  }
-
-  // ========== ИМПОРТ ОРИГИНАЛЬНОГО .WTS ==========
+  // ========== ИМПОРТ ОРИГИНАЛЬНОГО .WTS (с построением карты из allData) ==========
   function importWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1119,73 +1105,70 @@
         }
         if (!window.confirm(`Найдено ${parsed.length} непустых строк. Импортировать?`)) return;
 
-        // Шаг 1: Обновить словарь переводов из текущих записей
-        updateTranslationsDictionary()
+        // Строим карту переводов из текущих allData (очищенный оригинал → перевод)
+        const translationDict = {};
+        for (const entry of allData) {
+          const cleanOrig = cleanWtsText(entry.original);
+          const translation = entry.translation || '';
+          if (cleanOrig && translation.trim() !== '') {
+            translationDict[cleanOrig] = translation;
+          }
+        }
+
+        const updates = {};
+        const user = getCurrentUserInfo();
+
+        for (const item of parsed) {
+          const key = item.number;
+          const newOriginal = item.content;
+          const newComment = item.comment;
+
+          const existing = allData.find(e => e.key === key);
+
+          let translation = '';
+          let author = '';
+          let authorName = '';
+          let confirmed = false;
+          let confirmedBy = '';
+          let confirmedByName = '';
+
+          if (existing) {
+            if (existing.translation && existing.translation.trim() !== '') {
+              translation = existing.translation;
+              author = existing.translationAuthor || '';
+              authorName = existing.translationAuthorName || '';
+              confirmed = existing.confirmed || false;
+              confirmedBy = existing.confirmedBy || '';
+              confirmedByName = existing.confirmedByName || '';
+            } else {
+              const cleanOrig = cleanWtsText(newOriginal);
+              if (translationDict[cleanOrig]) {
+                translation = translationDict[cleanOrig];
+              }
+            }
+          } else {
+            const cleanOrig = cleanWtsText(newOriginal);
+            if (translationDict[cleanOrig]) {
+              translation = translationDict[cleanOrig];
+            }
+          }
+
+          updates[key] = {
+            original: newOriginal,
+            translation: translation,
+            translationAuthor: author || '',
+            translationAuthorName: authorName || '',
+            wtsComment: newComment,
+            userComments: existing ? (existing.userComments || []) : [],
+            confirmed: confirmed || false,
+            confirmedBy: confirmedBy || '',
+            confirmedByName: confirmedByName || ''
+          };
+        }
+
+        stringsRef.update(updates)
           .then(() => {
-            // Шаг 2: Получить актуальный словарь переводов
-            return translationsRef.once('value')
-              .then(snapshot => {
-                const translationDict = snapshot.val() || {};
-
-                // Шаг 3: Подготовить обновления для strings
-                const updates = {};
-                const user = getCurrentUserInfo();
-
-                for (const item of parsed) {
-                  const key = item.number;
-                  const newOriginal = item.content;
-                  const newComment = item.comment;
-
-                  const existing = allData.find(e => e.key === key);
-
-                  let translation = '';
-                  let author = '';
-                  let authorName = '';
-                  let confirmed = false;
-                  let confirmedBy = '';
-                  let confirmedByName = '';
-
-                  if (existing) {
-                    if (existing.translation && existing.translation.trim() !== '') {
-                      translation = existing.translation;
-                      author = existing.translationAuthor || '';
-                      authorName = existing.translationAuthorName || '';
-                      confirmed = existing.confirmed || false;
-                      confirmedBy = existing.confirmedBy || '';
-                      confirmedByName = existing.confirmedByName || '';
-                    } else {
-                      const cleanOrig = cleanWtsText(newOriginal);
-                      if (translationDict[cleanOrig]) {
-                        translation = translationDict[cleanOrig];
-                      }
-                    }
-                  } else {
-                    const cleanOrig = cleanWtsText(newOriginal);
-                    if (translationDict[cleanOrig]) {
-                      translation = translationDict[cleanOrig];
-                    }
-                  }
-
-                  // Сохраняем все символы как есть (без удаления управляющих)
-                  updates[key] = {
-                    original: newOriginal,
-                    translation: translation,
-                    translationAuthor: author || '',
-                    translationAuthorName: authorName || '',
-                    wtsComment: newComment,
-                    userComments: existing ? (existing.userComments || []) : [],
-                    confirmed: confirmed || false,
-                    confirmedBy: confirmedBy || '',
-                    confirmedByName: confirmedByName || ''
-                  };
-                }
-
-                // Применяем обновления
-                return stringsRef.update(updates)
-                  .then(() => {
-                    alert(`Импортировано ${parsed.length} строк. Словарь переводов обновлён.`);
-                  });
-              });
+            alert(`Импортировано ${parsed.length} строк. Переводы применены по совпадению оригиналов.`);
           })
           .catch(err => {
             console.error('Ошибка импорта:', err);
@@ -1298,8 +1281,6 @@
                 }
               }
             }
-            // Обновляем словарь переводов после CSV-импорта
-            updateTranslationsDictionary();
             render();
           })
           .catch(err => alert('Ошибка при обновлении переводов: ' + err.message));
