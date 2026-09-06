@@ -91,12 +91,7 @@
     .toolbar .import-btn:hover { background: #bf360c; }
     .toolbar .import-translations-wts-btn { background: #4a148c; }
     .toolbar .import-translations-wts-btn:hover { background: #6a1b9a; }
-    /* ВРЕМЕННАЯ КНОПКА – стиль */
-    .toolbar .import-comments-btn {
-      background: #00838f;
-    }
-    .toolbar .import-comments-btn:hover { background: #006064; }
-    #fileInput, #translationsWtsInput, #commentsWtsInput { display: none; }
+    #fileInput, #translationsWtsInput { display: none; }
     .filter-group {
       display: flex;
       align-items: center;
@@ -380,9 +375,6 @@
       <input type="checkbox" id="confirmImportedTranslations"> Подтвердить импорт
     </label>
     <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts</button>
-    <!-- ВРЕМЕННАЯ КНОПКА: импорт переводов в комментарии -->
-    <button class="import-comments-btn" id="importCommentsBtn" style="display:none;">💬 Импорт переводов в комментарии</button>
-    <input type="file" id="commentsWtsInput" accept=".wts" style="display:none;">
 
     <div class="filter-group">
       <label><input type="checkbox" id="filterOnlyRussian"> Только с русскими буквами</label>
@@ -488,9 +480,6 @@
   const pageInput = document.getElementById('pageInput');
   const gotoPageBtn = document.getElementById('gotoPage');
   const searchInput = document.getElementById('searchInput');
-  // ВРЕМЕННАЯ КНОПКА – элементы
-  const importCommentsBtn = document.getElementById('importCommentsBtn');
-  const commentsWtsInput = document.getElementById('commentsWtsInput');
 
   // Авторизация элементы
   const userInfo = document.getElementById('userInfo');
@@ -566,8 +555,6 @@
       importTranslationsWtsBtn.style.display = 'none';
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
-      // ВРЕМЕННАЯ КНОПКА – скрыть
-      importCommentsBtn.style.display = 'none';
       render();
     }
   }
@@ -586,14 +573,11 @@
       importTranslationsWtsBtn.style.display = 'inline-block';
       exportBtn.style.display = 'inline-block';
       confirmImportedTranslations.closest('label').style.display = 'inline-flex';
-      // ВРЕМЕННАЯ КНОПКА – показать
-      importCommentsBtn.style.display = 'inline-block';
     } else {
       importBtn.style.display = 'none';
       importTranslationsWtsBtn.style.display = 'none';
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
-      importCommentsBtn.style.display = 'none';
     }
     render();
   }
@@ -1465,103 +1449,9 @@
     this.value = '';
   });
 
-  // ========== ВРЕМЕННАЯ ФУНКЦИЯ: ИМПОРТ ПЕРЕВОДОВ В КОММЕНТАРИИ ==========
-  function importCommentsFromWTS(file) {
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      try {
-        const text = e.target.result;
-        const parsed = parseWTS(text);
-        if (parsed.length === 0) {
-          alert('Не удалось найти ни одной непустой строки STRING в файле.');
-          return;
-        }
-
-        const user = getCurrentUserInfo();
-        if (!user.uid) {
-          alert('Вы не авторизованы. Комментарии будут анонимными.');
-        }
-
-        const updates = {};
-        let added = 0;
-        let skipped = 0;
-
-        for (const item of parsed) {
-          const key = item.number;
-          const translationText = item.content.trim();
-          if (!translationText) continue;
-
-          const existing = allData.find(e => e.key === key);
-          if (!existing) {
-            skipped++;
-            continue;
-          }
-
-          // Создаём комментарий
-          const commentObj = {
-            author: user.uid || 'anonymous',
-            authorName: user.displayName || 'Аноним',
-            text: `Перевод из existing_translations.wts: ${translationText}`,
-            timestamp: Date.now()
-          };
-
-          // Получаем текущий массив комментариев
-          let comments = existing.userComments || [];
-          // Проверяем, нет ли уже такого же комментария (чтобы избежать дублей)
-          const duplicate = comments.some(c => c.text === commentObj.text && c.author === commentObj.author);
-          if (!duplicate) {
-            comments.push(commentObj);
-            if (comments.length > 50) {
-              comments = comments.slice(-50);
-            }
-            updates[key] = { userComments: comments };
-            added++;
-          } else {
-            skipped++;
-          }
-        }
-
-        if (added === 0) {
-          alert(`Не найдено новых переводов для добавления. (Пропущено: ${skipped})`);
-          return;
-        }
-
-        if (!window.confirm(`Найдено ${added} новых переводов для добавления в комментарии. Продолжить?`)) return;
-
-        const promiseArray = [];
-        for (const [key, data] of Object.entries(updates)) {
-          promiseArray.push(stringsRef.child(key).update(data));
-        }
-
-        Promise.all(promiseArray)
-          .then(() => {
-            alert(`Добавлено комментариев: ${added}. Пропущено (уже есть или нет записи): ${skipped}`);
-            // Обновляем локальные данные
-            for (const [key, data] of Object.entries(updates)) {
-              const localItem = allData.find(d => d.key === key);
-              if (localItem) {
-                localItem.userComments = data.userComments;
-              }
-            }
-            render();
-          })
-          .catch(err => alert('Ошибка при добавлении комментариев: ' + err.message));
-      } catch (err) {
-        alert('Ошибка при обработке файла: ' + err.message);
-      }
-    };
-    reader.onerror = () => alert('Ошибка чтения файла');
-    reader.readAsText(file, 'UTF-8');
-  }
-
-  importCommentsBtn.addEventListener('click', () => commentsWtsInput.click());
-  commentsWtsInput.addEventListener('change', function(e) {
-    if (this.files && this.files[0]) importCommentsFromWTS(this.files[0]);
-    this.value = '';
-  });
-
   // ========== ЭКСПОРТ (ТОЛЬКО ЗАГРУЖЕННЫЕ ФРАЗЫ) ==========
   function generateWTS(data, filterKeys) {
+    // Если filterKeys задан, оставляем только записи с ключами из этого массива
     let entries = Object.entries(data);
     if (filterKeys && filterKeys.length > 0) {
       const keySet = new Set(filterKeys.map(String));
@@ -1590,9 +1480,11 @@
         return;
       }
 
+      // Проверяем, есть ли список загруженных номеров
       let useFilter = false;
       let filterKeys = [];
       if (importedNumbers && importedNumbers.length > 0) {
+        // Проверим, существуют ли записи с такими номерами
         const existingKeys = Object.keys(data);
         const available = importedNumbers.filter(num => existingKeys.includes(String(num)));
         if (available.length > 0) {
@@ -1608,11 +1500,14 @@
         wtsText = generateWTS(data, filterKeys);
         message = `Экспортировано ${filterKeys.length} фраз (только загруженные).`;
       } else {
+        // Если нет загруженных номеров или они не найдены – экспортируем всё
         if (importedNumbers && importedNumbers.length > 0) {
+          // Были номера, но ни один не совпал с существующими записями
           if (!confirm('Список загруженных номеров не совпадает ни с одной существующей записью.\nЭкспортировать все фразы?')) {
             return;
           }
         } else {
+          // Нет загруженных номеров – экспортируем всё с предупреждением
           if (!confirm('Нет загруженных номеров. Экспортировать все фразы?')) {
             return;
           }
