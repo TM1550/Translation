@@ -8,12 +8,9 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <style>
+    /* ... (стили без изменений, кроме добавленного стиля для кнопки удаления) ... */
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body {
-      height: 100%;
-      margin: 0;
-      padding: 0;
-    }
+    html, body { height: 100%; margin: 0; padding: 0; }
     body {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       background: #f0f2f5;
@@ -36,13 +33,7 @@
       max-height: calc(100vh - 32px);
       overflow: hidden;
     }
-    h1 {
-      text-align: center;
-      color: #1a237e;
-      margin: 0 0 12px 0;
-      font-size: 1.8rem;
-      flex-shrink: 0;
-    }
+    h1 { text-align: center; color: #1a237e; margin: 0 0 12px 0; font-size: 1.8rem; flex-shrink: 0; }
     .auth-bar {
       display: flex;
       align-items: center;
@@ -64,10 +55,7 @@
       color: white;
     }
     .auth-bar button:hover { background: #0d47a1; }
-    .auth-bar .user-info {
-      font-weight: 500;
-      margin-right: auto;
-    }
+    .auth-bar .user-info { font-weight: 500; margin-right: auto; }
     .auth-bar .role-badge {
       background: #ffca28;
       padding: 2px 10px;
@@ -76,9 +64,7 @@
       font-weight: 600;
       color: #333;
     }
-    .auth-bar .set-name-btn {
-      background: #2e7d32;
-    }
+    .auth-bar .set-name-btn { background: #2e7d32; }
     .auth-bar .set-name-btn:hover { background: #1b5e20; }
     .toolbar {
       display: flex;
@@ -104,9 +90,16 @@
     .toolbar .export-btn:hover { background: #388e3c; }
     .toolbar .import-btn { background: #e65100; }
     .toolbar .import-btn:hover { background: #bf360c; }
-    .toolbar .import-csv-btn { background: #4a148c; }
-    .toolbar .import-csv-btn:hover { background: #6a1b9a; }
-    #fileInput, #csvFileInput { display: none; }
+    .toolbar .import-translations-wts-btn { background: #4a148c; }
+    .toolbar .import-translations-wts-btn:hover { background: #6a1b9a; }
+    /* ДОБАВЛЕНО: стиль для кнопки удаления всех фраз */
+    .toolbar .delete-all-btn {
+      background: #b71c1c;
+      color: white;
+      font-weight: bold;
+    }
+    .toolbar .delete-all-btn:hover { background: #880e0e; }
+    #fileInput, #translationsWtsInput { display: none; }
     .filter-group {
       display: flex;
       align-items: center;
@@ -117,22 +110,9 @@
       font-size: 14px;
       flex-wrap: wrap;
     }
-    .filter-group label {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      cursor: pointer;
-    }
-    .filter-group input[type="checkbox"] {
-      width: 16px;
-      height: 16px;
-      cursor: pointer;
-    }
-    .search-group {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
+    .filter-group label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+    .filter-group input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+    .search-group { display: flex; align-items: center; gap: 6px; }
     .search-group input[type="text"] {
       padding: 4px 10px;
       border: 1px solid #ccc;
@@ -141,10 +121,7 @@
       width: 200px;
       max-width: 100%;
     }
-    .search-group input[type="text"]:focus {
-      border-color: #0d47a1;
-      outline: none;
-    }
+    .search-group input[type="text"]:focus { border-color: #0d47a1; outline: none; }
     .pagination {
       display: flex;
       align-items: center;
@@ -152,16 +129,8 @@
       flex-wrap: wrap;
       margin-left: auto;
     }
-    .pagination select {
-      padding: 4px 8px;
-      border-radius: 6px;
-      border: 1px solid #ccc;
-      font-size: 14px;
-    }
-    .pagination span {
-      font-size: 14px;
-      color: #333;
-    }
+    .pagination select { padding: 4px 8px; border-radius: 6px; border: 1px solid #ccc; font-size: 14px; }
+    .pagination span { font-size: 14px; color: #333; }
     .pagination button {
       padding: 4px 12px;
       background: #e0e0e0;
@@ -171,10 +140,7 @@
       cursor: pointer;
       font-size: 14px;
     }
-    .pagination button:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
+    .pagination button:disabled { opacity: 0.5; cursor: not-allowed; }
     .pagination button:hover:not(:disabled) { background: #bdbdbd; }
     .pagination input[type="number"] {
       width: 60px;
@@ -184,22 +150,9 @@
       font-size: 14px;
       text-align: center;
     }
-    .pagination .goto-btn {
-      background: #0d47a1;
-      color: white;
-      padding: 4px 12px;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 14px;
-    }
+    .pagination .goto-btn { background: #0d47a1; color: white; padding: 4px 12px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
     .pagination .goto-btn:hover { background: #1565c0; }
-    .stats {
-      font-size: 14px;
-      color: #555;
-      font-weight: 500;
-      white-space: nowrap;
-    }
+    .stats { font-size: 14px; color: #555; font-weight: 500; white-space: nowrap; }
     .dictionary {
       flex: 1 1 auto;
       overflow-y: auto;
@@ -221,21 +174,10 @@
       align-items: start;
       transition: background 0.2s;
     }
-    .entry.inactive {
-      background: #f0f0f0;
-      opacity: 0.7;
-    }
-    .entry.inactive .original {
-      text-decoration: line-through;
-      color: #999;
-    }
-    .entry.group-header {
-      border-left-color: #e65100;
-      background: #fff8e1;
-    }
-    .entry.group-header.inactive {
-      background: #f0e8d0;
-    }
+    .entry.inactive { background: #f0f0f0; opacity: 0.7; }
+    .entry.inactive .original { text-decoration: line-through; color: #999; }
+    .entry.group-header { border-left-color: #e65100; background: #fff8e1; }
+    .entry.group-header.inactive { background: #f0e8d0; }
     .entry .left-col {
       display: flex;
       flex-direction: column;
@@ -251,16 +193,8 @@
       padding-left: 16px;
       max-width: 100%;
     }
-    .entry .meta {
-      font-size: 13px;
-      color: #888;
-    }
-    .entry .original {
-      font-weight: 500;
-      white-space: pre-wrap;
-      word-break: break-word;
-      max-width: 100%;
-    }
+    .entry .meta { font-size: 13px; color: #888; }
+    .entry .original { font-weight: 500; white-space: pre-wrap; word-break: break-word; max-width: 100%; }
     .entry .translation-row {
       display: flex;
       flex-wrap: wrap;
@@ -281,10 +215,7 @@
       overflow: hidden;
       min-height: 38px;
     }
-    .entry .translation-input:focus {
-      border-color: #0d47a1;
-      outline: none;
-    }
+    .entry .translation-input:focus { border-color: #0d47a1; outline: none; }
     .entry .save-translation-btn {
       background: #0d47a1;
       color: white;
@@ -332,42 +263,15 @@
       font-size: 13px;
     }
     .entry .confirm-btn:hover:not(:disabled) { background: #0d47a1; }
-    .entry .confirm-btn:disabled {
-      background: #b0bec5;
-      cursor: not-allowed;
-      opacity: 0.7;
-    }
-    .entry .confirm-btn.confirmed {
-      background: #e53935;
-    }
+    .entry .confirm-btn:disabled { background: #b0bec5; cursor: not-allowed; opacity: 0.7; }
+    .entry .confirm-btn.confirmed { background: #e53935; }
     .entry .confirm-btn.confirmed:hover:not(:disabled) { background: #c62828; }
-    .entry .confirm-btn.confirmed:disabled {
-      background: #b0bec5;
-      cursor: not-allowed;
-    }
-    .entry .inactive-btn {
-      background: #795548;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      padding: 4px 12px;
-      cursor: pointer;
-      font-size: 13px;
-    }
+    .entry .confirm-btn.confirmed:disabled { background: #b0bec5; cursor: not-allowed; }
+    .entry .inactive-btn { background: #795548; color: white; border: none; border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 13px; }
     .entry .inactive-btn:hover { background: #5d4037; }
-    .entry .inactive-btn.active {
-      background: #4caf50;
-    }
+    .entry .inactive-btn.active { background: #4caf50; }
     .entry .inactive-btn.active:hover { background: #388e3c; }
-    .entry .similar-btn {
-      background: #6a1b9a;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      padding: 4px 12px;
-      cursor: pointer;
-      font-size: 13px;
-    }
+    .entry .similar-btn { background: #6a1b9a; color: white; border: none; border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 13px; }
     .entry .similar-btn:hover { background: #4a148c; }
     .entry .comment-section {
       grid-column: 1 / -1;
@@ -397,54 +301,14 @@
       justify-content: space-between;
       align-items: center;
     }
-    .entry .comment-section .user-comment .comment-text {
-      flex: 1;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    .entry .comment-section .user-comment .comment-author {
-      font-size: 12px;
-      color: #666;
-      margin-left: 8px;
-      white-space: nowrap;
-    }
-    .entry .comment-section .comment-input {
-      width: 100%;
-      padding: 6px 10px;
-      border: 1px solid #cfd8dc;
-      border-radius: 6px;
-      font-size: 14px;
-      margin-top: 4px;
-    }
-    .entry .comment-section .comment-save-btn {
-      background: #0d47a1;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      padding: 4px 12px;
-      cursor: pointer;
-      font-size: 13px;
-      margin-top: 4px;
-      align-self: flex-start;
-    }
+    .entry .comment-section .user-comment .comment-text { flex: 1; white-space: pre-wrap; word-break: break-word; }
+    .entry .comment-section .user-comment .comment-author { font-size: 12px; color: #666; margin-left: 8px; white-space: nowrap; }
+    .entry .comment-section .comment-input { width: 100%; padding: 6px 10px; border: 1px solid #cfd8dc; border-radius: 6px; font-size: 14px; margin-top: 4px; }
+    .entry .comment-section .comment-save-btn { background: #0d47a1; color: white; border: none; border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 13px; margin-top: 4px; align-self: flex-start; }
     .entry .comment-section .comment-save-btn:hover { background: #1565c0; }
-    .entry .comment-section .show-all-btn {
-      background: #4a148c;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      padding: 2px 10px;
-      cursor: pointer;
-      font-size: 12px;
-      margin-top: 4px;
-      align-self: flex-start;
-    }
+    .entry .comment-section .show-all-btn { background: #4a148c; color: white; border: none; border-radius: 6px; padding: 2px 10px; cursor: pointer; font-size: 12px; margin-top: 4px; align-self: flex-start; }
     .entry .comment-section .show-all-btn:hover { background: #6a1b9a; }
-    .loader {
-      text-align: center;
-      padding: 20px;
-      color: #888;
-    }
+    .loader { text-align: center; padding: 20px; color: #888; }
     .status {
       flex-shrink: 0;
       margin-top: 8px;
@@ -456,7 +320,6 @@
       justify-content: space-between;
     }
     .status .online { color: #2e7d32; font-weight: 600; }
-
     .modal-overlay {
       display: none;
       position: fixed;
@@ -466,9 +329,7 @@
       justify-content: center;
       align-items: center;
     }
-    .modal-overlay.active {
-      display: flex;
-    }
+    .modal-overlay.active { display: flex; }
     .modal-box {
       background: white;
       max-width: 700px;
@@ -480,21 +341,10 @@
       overflow-y: auto;
       position: relative;
     }
-    .modal-box .close-btn {
-      position: absolute;
-      top: 10px;
-      right: 16px;
-      font-size: 28px;
-      cursor: pointer;
-      color: #888;
-    }
+    .modal-box .close-btn { position: absolute; top: 10px; right: 16px; font-size: 28px; cursor: pointer; color: #888; }
     .modal-box .close-btn:hover { color: #333; }
     .modal-box h3 { margin-bottom: 12px; }
-    .modal-box .modal-item {
-      margin-bottom: 12px;
-      padding-bottom: 8px;
-      border-bottom: 1px solid #eee;
-    }
+    .modal-box .modal-item { margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #eee; }
     .modal-box .modal-item .modal-original { font-weight: 500; }
     .modal-box .modal-item .modal-translation { color: #555; font-size: 0.95em; margin-top: 4px; }
     .modal-box .modal-item .modal-score { font-size: 0.8em; color: #888; margin-top: 2px; }
@@ -502,27 +352,11 @@
     .modal-box .modal-item .modal-header { display: flex; justify-content: space-between; }
     .modal-box .modal-item .modal-header .modal-key { color: #888; font-size: 0.9em; }
     @media (max-width: 768px) {
-      .entry {
-        grid-template-columns: 1fr;
-      }
-      .entry .right-col {
-        border-left: none;
-        padding-left: 0;
-        border-top: 1px solid #ddd;
-        padding-top: 8px;
-      }
-      .app {
-        padding: 12px;
-        height: calc(100vh - 24px);
-      }
-      .toolbar {
-        gap: 8px;
-      }
-      .filter-group {
-        flex-wrap: wrap;
-        gap: 8px;
-        padding: 4px 8px;
-      }
+      .entry { grid-template-columns: 1fr; }
+      .entry .right-col { border-left: none; padding-left: 0; border-top: 1px solid #ddd; padding-top: 8px; }
+      .app { padding: 12px; height: calc(100vh - 24px); }
+      .toolbar { gap: 8px; }
+      .filter-group { flex-wrap: wrap; gap: 8px; padding: 4px 8px; }
     }
   </style>
 </head>
@@ -543,12 +377,14 @@
     <button id="refreshBtn">🔄 Обновить</button>
     <button class="import-btn" id="importBtn" style="display:none;">📂 Загрузить .wts</button>
     <input type="file" id="fileInput" accept=".wts">
-    <button class="import-csv-btn" id="importCsvBtn" style="display:none;">📥 Импорт CSV</button>
-    <input type="file" id="csvFileInput" accept=".csv" style="display:none;">
+    <button class="import-translations-wts-btn" id="importTranslationsWtsBtn" style="display:none;">📥 Загрузить переводы .wts</button>
+    <input type="file" id="translationsWtsInput" accept=".wts" style="display:none;">
     <label style="display:inline-flex;align-items:center;gap:4px;font-size:14px;background:#e0f2f1;padding:4px 12px;border-radius:20px;cursor:pointer;">
       <input type="checkbox" id="confirmImportedTranslations"> Подтвердить импорт
     </label>
     <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts</button>
+    <!-- ДОБАВЛЕНО: кнопка удаления всех фраз (только для редакторов) -->
+    <button class="delete-all-btn" id="deleteAllBtn" style="display:none;">🗑️ Удалить все фразы</button>
 
     <div class="filter-group">
       <label><input type="checkbox" id="filterOnlyRussian"> Только с русскими буквами</label>
@@ -585,7 +421,7 @@
     <div class="loader">Загрузка словаря...</div>
   </div>
 
-  <!-- Модальное окно для комментариев -->
+  <!-- Модальные окна (без изменений) -->
   <div class="modal-overlay" id="commentsModal">
     <div class="modal-box">
       <span class="close-btn" id="modalCloseBtn">&times;</span>
@@ -594,7 +430,6 @@
     </div>
   </div>
 
-  <!-- Модальное окно для похожих переводов -->
   <div class="modal-overlay" id="similarModal">
     <div class="modal-box">
       <span class="close-btn" id="similarModalClose">&times;</span>
@@ -636,8 +471,8 @@
   const connectionStatus = document.getElementById('connectionStatus');
   const fileInput = document.getElementById('fileInput');
   const importBtn = document.getElementById('importBtn');
-  const importCsvBtn = document.getElementById('importCsvBtn');
-  const csvFileInput = document.getElementById('csvFileInput');
+  const importTranslationsWtsBtn = document.getElementById('importTranslationsWtsBtn');
+  const translationsWtsInput = document.getElementById('translationsWtsInput');
   const confirmImportedTranslations = document.getElementById('confirmImportedTranslations');
   const exportBtn = document.getElementById('exportBtn');
   const refreshBtn = document.getElementById('refreshBtn');
@@ -655,6 +490,8 @@
   const pageInput = document.getElementById('pageInput');
   const gotoPageBtn = document.getElementById('gotoPage');
   const searchInput = document.getElementById('searchInput');
+  // ДОБАВЛЕНО: ссылка на кнопку удаления
+  const deleteAllBtn = document.getElementById('deleteAllBtn');
 
   // Авторизация элементы
   const userInfo = document.getElementById('userInfo');
@@ -727,9 +564,10 @@
       loginGoogleBtn.style.display = 'inline-block';
       logoutBtn.style.display = 'none';
       importBtn.style.display = 'none';
-      importCsvBtn.style.display = 'none';
+      importTranslationsWtsBtn.style.display = 'none';
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
+      deleteAllBtn.style.display = 'none'; // ДОБАВЛЕНО: скрыть кнопку удаления
       render();
     }
   }
@@ -745,14 +583,16 @@
     logoutBtn.style.display = 'inline-block';
     if (role === 'editor') {
       importBtn.style.display = 'inline-block';
-      importCsvBtn.style.display = 'inline-block';
+      importTranslationsWtsBtn.style.display = 'inline-block';
       exportBtn.style.display = 'inline-block';
       confirmImportedTranslations.closest('label').style.display = 'inline-flex';
+      deleteAllBtn.style.display = 'inline-block'; // ДОБАВЛЕНО: показать кнопку удаления
     } else {
       importBtn.style.display = 'none';
-      importCsvBtn.style.display = 'none';
+      importTranslationsWtsBtn.style.display = 'none';
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
+      deleteAllBtn.style.display = 'none'; // ДОБАВЛЕНО: скрыть кнопку удаления
     }
     render();
   }
@@ -1035,10 +875,8 @@
     similarModalTitle.textContent = `Похожие подтверждённые переводы для #${key}`;
     let html = '';
     for (const s of similar) {
-      // Разбиваем оригинал на слова и выделяем общие
       const words = s.original.split(/\s+/);
       const highlighted = words.map(w => {
-        // удаляем знаки препинания для сравнения
         const clean = w.replace(/[^a-zа-яё0-9]/gi, '');
         if (s.commonWords.includes(clean.toLowerCase())) {
           return `<strong>${escapeHtml(w)}</strong>`;
@@ -1137,7 +975,6 @@
           confirmedDisplay = `<span class="confirmed-badge">✅ Подтверждено${confirmedByName ? ' (' + escapeHtml(confirmedByName) + ')' : ''}</span>`;
         }
 
-        // Кнопка неактивности (только для редакторов)
         let inactiveButton = '';
         if (user.role === 'editor') {
           const label = inactive ? 'Активировать' : 'Сделать неактивной';
@@ -1145,10 +982,8 @@
           inactiveButton = `<button class="${btnClass}" data-key="${safeKey}">${label}</button>`;
         }
 
-        // Кнопка "Похожие" (доступна всем)
         const similarButton = `<button class="similar-btn" data-key="${safeKey}">🔍 Похожие</button>`;
 
-        // Комментарии
         let commentHtml = '';
         if (wtsComment) {
           commentHtml += `<div class="wts-comment">📄 Из файла: ${escapeHtml(wtsComment)}</div>`;
@@ -1172,7 +1007,6 @@
           <button class="comment-save-btn" data-key="${safeKey}">Отправить</button>
         `;
 
-        // Формируем классы для entry
         let entryClasses = 'entry';
         if (inactive) entryClasses += ' inactive';
         if (groupMode.checked && item._groupMembers && item._groupMembers.length > 1) entryClasses += ' group-header';
@@ -1215,7 +1049,6 @@
       container.innerHTML = html;
       countStatus.textContent = totalDisplay;
 
-      // Обработчики и авто-высота
       container.querySelectorAll('.translation-input').forEach(textarea => {
         autoResize(textarea);
         textarea.removeEventListener('input', handleTextareaInput);
@@ -1538,73 +1371,56 @@
     this.value = '';
   });
 
-  // ========== ИМПОРТ ИЗ CSV ==========
-  function parseCSV(text) {
-    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-    const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
-    if (lines.length === 0) return [];
-    const firstLine = lines[0];
-    const delimiter = firstLine.includes(';') ? ';' : ',';
-    const result = [];
-    for (const line of lines) {
-      const parts = line.split(delimiter);
-      if (parts.length >= 2) {
-        const col1 = parts[0].replace(/^"|"$/g, '').trim();
-        const col2 = parts.slice(1).join(delimiter).replace(/^"|"$/g, '').trim();
-        result.push({ original: col1, translation: col2 });
-      }
-    }
-    return result;
-  }
-
-  function importCSV(file) {
+  // ========== ИМПОРТ ПЕРЕВОДОВ ИЗ WTS ПО НОМЕРАМ ==========
+  function importTranslationsFromWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
       try {
         const text = e.target.result;
-        const rows = parseCSV(text);
-        if (rows.length === 0) {
-          alert('Не удалось распарсить CSV. Проверьте формат (первая колонка – оригинал, вторая – перевод).');
+        const parsed = parseWTS(text);
+        if (parsed.length === 0) {
+          alert('Не удалось найти ни одной непустой строки STRING в файле.');
           return;
         }
 
         const user = getCurrentUserInfo();
         const confirm = confirmImportedTranslations.checked;
 
-        const translationMap = {};
-        for (const row of rows) {
-          const cleanOrig = cleanWtsText(row.original);
-          if (cleanOrig && row.translation) {
-            translationMap[cleanOrig] = row.translation;
-          }
-        }
-
         const updates = {};
         let count = 0;
+        const notFound = [];
 
-        for (const existing of allData) {
-          const originalClean = cleanWtsText(existing.original);
-          if (translationMap.hasOwnProperty(originalClean)) {
-            const newTranslation = translationMap[originalClean];
-            if (newTranslation && newTranslation.trim() !== '') {
-              const updateData = {
-                translation: newTranslation,
-                translationAuthor: user.uid,
-                translationAuthorName: user.displayName
-              };
-              if (confirm) {
-                updateData.confirmed = true;
-                updateData.confirmedBy = user.uid;
-                updateData.confirmedByName = user.displayName;
-              }
-              updates[existing.key] = updateData;
-              count++;
-            }
+        for (const item of parsed) {
+          const key = item.number;
+          const translationText = item.content.trim();
+          if (!translationText) continue;
+
+          const existing = allData.find(e => e.key === key);
+          if (!existing) {
+            notFound.push(key);
+            continue;
           }
+
+          const updateData = {
+            translation: translationText,
+            translationAuthor: user.uid,
+            translationAuthorName: user.displayName
+          };
+          if (confirm) {
+            updateData.confirmed = true;
+            updateData.confirmedBy = user.uid;
+            updateData.confirmedByName = user.displayName;
+          }
+          updates[key] = updateData;
+          count++;
         }
 
         if (count === 0) {
-          alert('Не найдено совпадений по оригиналу. Ни один перевод не обновлён.');
+          let msg = 'Не найдено совпадений по номерам. Ни один перевод не обновлён.';
+          if (notFound.length > 0) {
+            msg += `\nОтсутствуют в базе номера: ${notFound.slice(0, 20).join(', ')}${notFound.length > 20 ? '...' : ''}`;
+          }
+          alert(msg);
           return;
         }
 
@@ -1635,16 +1451,16 @@
           })
           .catch(err => alert('Ошибка при обновлении переводов: ' + err.message));
       } catch (err) {
-        alert('Ошибка при обработке CSV: ' + err.message);
+        alert('Ошибка при обработке WTS-файла: ' + err.message);
       }
     };
     reader.onerror = () => alert('Ошибка чтения файла');
     reader.readAsText(file, 'UTF-8');
   }
 
-  importCsvBtn.addEventListener('click', () => csvFileInput.click());
-  csvFileInput.addEventListener('change', function(e) {
-    if (this.files && this.files[0]) importCSV(this.files[0]);
+  importTranslationsWtsBtn.addEventListener('click', () => translationsWtsInput.click());
+  translationsWtsInput.addEventListener('change', function(e) {
+    if (this.files && this.files[0]) importTranslationsFromWTS(this.files[0]);
     this.value = '';
   });
 
@@ -1742,7 +1558,45 @@
     stringsRef.once('value', () => render());
   });
 
-  // ========== СЛУШАТЕЛЬ МЕТАДАННЫХ (РЕАЛЬНОЕ ВРЕМЯ) ==========
+  // ========== УДАЛЕНИЕ ВСЕХ ФРАЗ (ДОБАВЛЕНО) ==========
+  deleteAllBtn.addEventListener('click', function() {
+    if (!currentUser || currentUserRole !== 'editor') {
+      alert('У вас нет прав на удаление всех фраз.');
+      return;
+    }
+
+    // Первое подтверждение
+    if (!confirm('Внимание! Вы собираетесь удалить ВСЕ фразы из базы данных. Это действие НЕОБРАТИМО. Продолжить?')) {
+      return;
+    }
+
+    // Второе подтверждение с вводом кода
+    const code = prompt('Для подтверждения введите слово "УДАЛИТЬ" (без кавычек):');
+    if (code !== 'УДАЛИТЬ') {
+      alert('Операция отменена. Код не совпадает.');
+      return;
+    }
+
+    // Третье предупреждение
+    if (!confirm('Последний шанс! Удалить все строки навсегда?')) {
+      return;
+    }
+
+    // Выполняем удаление
+    stringsRef.remove()
+      .then(() => {
+        alert('Все фразы успешно удалены.');
+        allData = [];
+        // Также можно очистить importedNumbers, но оставим как есть
+        render();
+      })
+      .catch(err => {
+        alert('Ошибка при удалении: ' + err.message);
+        console.error('Ошибка удаления:', err);
+      });
+  });
+
+  // ========== СЛУШАТЕЛЬ МЕТАДАННЫХ ==========
   metadataRef.on('value', (snapshot) => {
     const data = snapshot.val();
     if (data && data.importedNumbers) {
