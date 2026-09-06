@@ -8,7 +8,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <style>
-    /* ... (стили без изменений, кроме добавленного стиля для кнопки удаления) ... */
+    /* ... (стили без изменений) ... */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; margin: 0; padding: 0; }
     body {
@@ -90,15 +90,9 @@
     .toolbar .export-btn:hover { background: #388e3c; }
     .toolbar .import-btn { background: #e65100; }
     .toolbar .import-btn:hover { background: #bf360c; }
+    /* ИЗМЕНЕНО: класс кнопки для загрузки переводов из WTS */
     .toolbar .import-translations-wts-btn { background: #4a148c; }
     .toolbar .import-translations-wts-btn:hover { background: #6a1b9a; }
-    /* ДОБАВЛЕНО: стиль для кнопки удаления всех фраз */
-    .toolbar .delete-all-btn {
-      background: #b71c1c;
-      color: white;
-      font-weight: bold;
-    }
-    .toolbar .delete-all-btn:hover { background: #880e0e; }
     #fileInput, #translationsWtsInput { display: none; }
     .filter-group {
       display: flex;
@@ -377,14 +371,13 @@
     <button id="refreshBtn">🔄 Обновить</button>
     <button class="import-btn" id="importBtn" style="display:none;">📂 Загрузить .wts</button>
     <input type="file" id="fileInput" accept=".wts">
+    <!-- ИЗМЕНЕНО: кнопка импорта переводов из WTS вместо CSV -->
     <button class="import-translations-wts-btn" id="importTranslationsWtsBtn" style="display:none;">📥 Загрузить переводы .wts</button>
     <input type="file" id="translationsWtsInput" accept=".wts" style="display:none;">
     <label style="display:inline-flex;align-items:center;gap:4px;font-size:14px;background:#e0f2f1;padding:4px 12px;border-radius:20px;cursor:pointer;">
       <input type="checkbox" id="confirmImportedTranslations"> Подтвердить импорт
     </label>
     <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts</button>
-    <!-- ДОБАВЛЕНО: кнопка удаления всех фраз (только для редакторов) -->
-    <button class="delete-all-btn" id="deleteAllBtn" style="display:none;">🗑️ Удалить все фразы</button>
 
     <div class="filter-group">
       <label><input type="checkbox" id="filterOnlyRussian"> Только с русскими буквами</label>
@@ -421,7 +414,7 @@
     <div class="loader">Загрузка словаря...</div>
   </div>
 
-  <!-- Модальные окна (без изменений) -->
+  <!-- Модальное окно для комментариев -->
   <div class="modal-overlay" id="commentsModal">
     <div class="modal-box">
       <span class="close-btn" id="modalCloseBtn">&times;</span>
@@ -430,6 +423,7 @@
     </div>
   </div>
 
+  <!-- Модальное окно для похожих переводов -->
   <div class="modal-overlay" id="similarModal">
     <div class="modal-box">
       <span class="close-btn" id="similarModalClose">&times;</span>
@@ -471,6 +465,7 @@
   const connectionStatus = document.getElementById('connectionStatus');
   const fileInput = document.getElementById('fileInput');
   const importBtn = document.getElementById('importBtn');
+  // ИЗМЕНЕНО: заменяем CSV на WTS для переводов
   const importTranslationsWtsBtn = document.getElementById('importTranslationsWtsBtn');
   const translationsWtsInput = document.getElementById('translationsWtsInput');
   const confirmImportedTranslations = document.getElementById('confirmImportedTranslations');
@@ -490,8 +485,6 @@
   const pageInput = document.getElementById('pageInput');
   const gotoPageBtn = document.getElementById('gotoPage');
   const searchInput = document.getElementById('searchInput');
-  // ДОБАВЛЕНО: ссылка на кнопку удаления
-  const deleteAllBtn = document.getElementById('deleteAllBtn');
 
   // Авторизация элементы
   const userInfo = document.getElementById('userInfo');
@@ -567,7 +560,6 @@
       importTranslationsWtsBtn.style.display = 'none';
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
-      deleteAllBtn.style.display = 'none'; // ДОБАВЛЕНО: скрыть кнопку удаления
       render();
     }
   }
@@ -586,13 +578,11 @@
       importTranslationsWtsBtn.style.display = 'inline-block';
       exportBtn.style.display = 'inline-block';
       confirmImportedTranslations.closest('label').style.display = 'inline-flex';
-      deleteAllBtn.style.display = 'inline-block'; // ДОБАВЛЕНО: показать кнопку удаления
     } else {
       importBtn.style.display = 'none';
       importTranslationsWtsBtn.style.display = 'none';
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
-      deleteAllBtn.style.display = 'none'; // ДОБАВЛЕНО: скрыть кнопку удаления
     }
     render();
   }
@@ -1371,7 +1361,7 @@
     this.value = '';
   });
 
-  // ========== ИМПОРТ ПЕРЕВОДОВ ИЗ WTS ПО НОМЕРАМ ==========
+  // ========== ИМПОРТ ПЕРЕВОДОВ ИЗ WTS ПО НОМЕРАМ (ЗАМЕНА CSV) ==========
   function importTranslationsFromWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1386,6 +1376,7 @@
         const user = getCurrentUserInfo();
         const confirm = confirmImportedTranslations.checked;
 
+        // Сопоставляем номера из файла с существующими записями
         const updates = {};
         let count = 0;
         const notFound = [];
@@ -1401,6 +1392,7 @@
             continue;
           }
 
+          // Обновляем перевод
           const updateData = {
             translation: translationText,
             translationAuthor: user.uid,
@@ -1434,6 +1426,7 @@
         Promise.all(promiseArray)
           .then(() => {
             alert(`Обновлено переводов: ${count}`);
+            // Обновляем локальные данные
             for (const [key, data] of Object.entries(updates)) {
               const localItem = allData.find(d => d.key === key);
               if (localItem) {
@@ -1458,6 +1451,7 @@
     reader.readAsText(file, 'UTF-8');
   }
 
+  // ИЗМЕНЕНО: привязываем новую кнопку и input
   importTranslationsWtsBtn.addEventListener('click', () => translationsWtsInput.click());
   translationsWtsInput.addEventListener('change', function(e) {
     if (this.files && this.files[0]) importTranslationsFromWTS(this.files[0]);
@@ -1558,45 +1552,7 @@
     stringsRef.once('value', () => render());
   });
 
-  // ========== УДАЛЕНИЕ ВСЕХ ФРАЗ (ДОБАВЛЕНО) ==========
-  deleteAllBtn.addEventListener('click', function() {
-    if (!currentUser || currentUserRole !== 'editor') {
-      alert('У вас нет прав на удаление всех фраз.');
-      return;
-    }
-
-    // Первое подтверждение
-    if (!confirm('Внимание! Вы собираетесь удалить ВСЕ фразы из базы данных. Это действие НЕОБРАТИМО. Продолжить?')) {
-      return;
-    }
-
-    // Второе подтверждение с вводом кода
-    const code = prompt('Для подтверждения введите слово "УДАЛИТЬ" (без кавычек):');
-    if (code !== 'УДАЛИТЬ') {
-      alert('Операция отменена. Код не совпадает.');
-      return;
-    }
-
-    // Третье предупреждение
-    if (!confirm('Последний шанс! Удалить все строки навсегда?')) {
-      return;
-    }
-
-    // Выполняем удаление
-    stringsRef.remove()
-      .then(() => {
-        alert('Все фразы успешно удалены.');
-        allData = [];
-        // Также можно очистить importedNumbers, но оставим как есть
-        render();
-      })
-      .catch(err => {
-        alert('Ошибка при удалении: ' + err.message);
-        console.error('Ошибка удаления:', err);
-      });
-  });
-
-  // ========== СЛУШАТЕЛЬ МЕТАДАННЫХ ==========
+  // ========== СЛУШАТЕЛЬ МЕТАДАННЫХ (РЕАЛЬНОЕ ВРЕМЯ) ==========
   metadataRef.on('value', (snapshot) => {
     const data = snapshot.val();
     if (data && data.importedNumbers) {
