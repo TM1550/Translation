@@ -8,6 +8,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <style>
+    /* ... (стили без изменений, кроме добавленного стиля для кнопки удаления) ... */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; margin: 0; padding: 0; }
     body {
@@ -91,6 +92,13 @@
     .toolbar .import-btn:hover { background: #bf360c; }
     .toolbar .import-translations-wts-btn { background: #4a148c; }
     .toolbar .import-translations-wts-btn:hover { background: #6a1b9a; }
+    /* ДОБАВЛЕНО: стиль для кнопки удаления всех фраз */
+    .toolbar .delete-all-btn {
+      background: #b71c1c;
+      color: white;
+      font-weight: bold;
+    }
+    .toolbar .delete-all-btn:hover { background: #880e0e; }
     #fileInput, #translationsWtsInput { display: none; }
     .filter-group {
       display: flex;
@@ -375,6 +383,8 @@
       <input type="checkbox" id="confirmImportedTranslations"> Подтвердить импорт
     </label>
     <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts</button>
+    <!-- ДОБАВЛЕНО: кнопка удаления всех фраз (только для редакторов) -->
+    <button class="delete-all-btn" id="deleteAllBtn" style="display:none;">🗑️ Удалить все фразы</button>
 
     <div class="filter-group">
       <label><input type="checkbox" id="filterOnlyRussian"> Только с русскими буквами</label>
@@ -411,7 +421,7 @@
     <div class="loader">Загрузка словаря...</div>
   </div>
 
-  <!-- Модальные окна -->
+  <!-- Модальные окна (без изменений) -->
   <div class="modal-overlay" id="commentsModal">
     <div class="modal-box">
       <span class="close-btn" id="modalCloseBtn">&times;</span>
@@ -480,6 +490,8 @@
   const pageInput = document.getElementById('pageInput');
   const gotoPageBtn = document.getElementById('gotoPage');
   const searchInput = document.getElementById('searchInput');
+  // ДОБАВЛЕНО: ссылка на кнопку удаления
+  const deleteAllBtn = document.getElementById('deleteAllBtn');
 
   // Авторизация элементы
   const userInfo = document.getElementById('userInfo');
@@ -555,6 +567,7 @@
       importTranslationsWtsBtn.style.display = 'none';
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
+      deleteAllBtn.style.display = 'none'; // ДОБАВЛЕНО: скрыть кнопку удаления
       render();
     }
   }
@@ -573,11 +586,13 @@
       importTranslationsWtsBtn.style.display = 'inline-block';
       exportBtn.style.display = 'inline-block';
       confirmImportedTranslations.closest('label').style.display = 'inline-flex';
+      deleteAllBtn.style.display = 'inline-block'; // ДОБАВЛЕНО: показать кнопку удаления
     } else {
       importBtn.style.display = 'none';
       importTranslationsWtsBtn.style.display = 'none';
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
+      deleteAllBtn.style.display = 'none'; // ДОБАВЛЕНО: скрыть кнопку удаления
     }
     render();
   }
@@ -1449,18 +1464,12 @@
     this.value = '';
   });
 
-  // ========== ЭКСПОРТ (ТОЛЬКО ЗАГРУЖЕННЫЕ ФРАЗЫ) ==========
-  function generateWTS(data, filterKeys) {
-    // Если filterKeys задан, оставляем только записи с ключами из этого массива
-    let entries = Object.entries(data);
-    if (filterKeys && filterKeys.length > 0) {
-      const keySet = new Set(filterKeys.map(String));
-      entries = entries.filter(([key]) => keySet.has(key));
-    }
-    entries.sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
-
+  // ========== ЭКСПОРТ ==========
+  function generateWTS(data) {
+    const keys = Object.keys(data).sort((a, b) => parseInt(a) - parseInt(b));
     let output = '';
-    for (const [key, entry] of entries) {
+    for (const key of keys) {
+      const entry = data[key];
       const original = entry.original || '';
       const translation = entry.translation || '';
       const textToWrite = translation.trim() !== '' ? translation : original;
@@ -1479,43 +1488,7 @@
         alert('Нет данных для экспорта.');
         return;
       }
-
-      // Проверяем, есть ли список загруженных номеров
-      let useFilter = false;
-      let filterKeys = [];
-      if (importedNumbers && importedNumbers.length > 0) {
-        // Проверим, существуют ли записи с такими номерами
-        const existingKeys = Object.keys(data);
-        const available = importedNumbers.filter(num => existingKeys.includes(String(num)));
-        if (available.length > 0) {
-          useFilter = true;
-          filterKeys = available;
-        }
-      }
-
-      let wtsText;
-      let message = '';
-
-      if (useFilter) {
-        wtsText = generateWTS(data, filterKeys);
-        message = `Экспортировано ${filterKeys.length} фраз (только загруженные).`;
-      } else {
-        // Если нет загруженных номеров или они не найдены – экспортируем всё
-        if (importedNumbers && importedNumbers.length > 0) {
-          // Были номера, но ни один не совпал с существующими записями
-          if (!confirm('Список загруженных номеров не совпадает ни с одной существующей записью.\nЭкспортировать все фразы?')) {
-            return;
-          }
-        } else {
-          // Нет загруженных номеров – экспортируем всё с предупреждением
-          if (!confirm('Нет загруженных номеров. Экспортировать все фразы?')) {
-            return;
-          }
-        }
-        wtsText = generateWTS(data, null);
-        message = `Экспортировано ${Object.keys(data).length} фраз (все записи).`;
-      }
-
+      const wtsText = generateWTS(data);
       const blob = new Blob([wtsText], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1525,7 +1498,6 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      alert(message);
     });
   }
 
@@ -1584,6 +1556,44 @@
 
   refreshBtn.addEventListener('click', () => {
     stringsRef.once('value', () => render());
+  });
+
+  // ========== УДАЛЕНИЕ ВСЕХ ФРАЗ (ДОБАВЛЕНО) ==========
+  deleteAllBtn.addEventListener('click', function() {
+    if (!currentUser || currentUserRole !== 'editor') {
+      alert('У вас нет прав на удаление всех фраз.');
+      return;
+    }
+
+    // Первое подтверждение
+    if (!confirm('Внимание! Вы собираетесь удалить ВСЕ фразы из базы данных. Это действие НЕОБРАТИМО. Продолжить?')) {
+      return;
+    }
+
+    // Второе подтверждение с вводом кода
+    const code = prompt('Для подтверждения введите слово "УДАЛИТЬ" (без кавычек):');
+    if (code !== 'УДАЛИТЬ') {
+      alert('Операция отменена. Код не совпадает.');
+      return;
+    }
+
+    // Третье предупреждение
+    if (!confirm('Последний шанс! Удалить все строки навсегда?')) {
+      return;
+    }
+
+    // Выполняем удаление
+    stringsRef.remove()
+      .then(() => {
+        alert('Все фразы успешно удалены.');
+        allData = [];
+        // Также можно очистить importedNumbers, но оставим как есть
+        render();
+      })
+      .catch(err => {
+        alert('Ошибка при удалении: ' + err.message);
+        console.error('Ошибка удаления:', err);
+      });
   });
 
   // ========== СЛУШАТЕЛЬ МЕТАДАННЫХ ==========
