@@ -8,7 +8,6 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <style>
-    /* ... (стили без изменений, кроме добавленного стиля для кнопки удаления) ... */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; margin: 0; padding: 0; }
     body {
@@ -92,13 +91,6 @@
     .toolbar .import-btn:hover { background: #bf360c; }
     .toolbar .import-translations-wts-btn { background: #4a148c; }
     .toolbar .import-translations-wts-btn:hover { background: #6a1b9a; }
-    /* ДОБАВЛЕНО: стиль для кнопки удаления всех фраз */
-    .toolbar .delete-all-btn {
-      background: #b71c1c;
-      color: white;
-      font-weight: bold;
-    }
-    .toolbar .delete-all-btn:hover { background: #880e0e; }
     #fileInput, #translationsWtsInput { display: none; }
     .filter-group {
       display: flex;
@@ -383,8 +375,6 @@
       <input type="checkbox" id="confirmImportedTranslations"> Подтвердить импорт
     </label>
     <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts</button>
-    <!-- ДОБАВЛЕНО: кнопка удаления всех фраз (только для редакторов) -->
-    <button class="delete-all-btn" id="deleteAllBtn" style="display:none;">🗑️ Удалить все фразы</button>
 
     <div class="filter-group">
       <label><input type="checkbox" id="filterOnlyRussian"> Только с русскими буквами</label>
@@ -421,7 +411,7 @@
     <div class="loader">Загрузка словаря...</div>
   </div>
 
-  <!-- Модальные окна (без изменений) -->
+  <!-- Модальные окна -->
   <div class="modal-overlay" id="commentsModal">
     <div class="modal-box">
       <span class="close-btn" id="modalCloseBtn">&times;</span>
@@ -490,8 +480,6 @@
   const pageInput = document.getElementById('pageInput');
   const gotoPageBtn = document.getElementById('gotoPage');
   const searchInput = document.getElementById('searchInput');
-  // ДОБАВЛЕНО: ссылка на кнопку удаления
-  const deleteAllBtn = document.getElementById('deleteAllBtn');
 
   // Авторизация элементы
   const userInfo = document.getElementById('userInfo');
@@ -567,7 +555,6 @@
       importTranslationsWtsBtn.style.display = 'none';
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
-      deleteAllBtn.style.display = 'none'; // ДОБАВЛЕНО: скрыть кнопку удаления
       render();
     }
   }
@@ -586,13 +573,11 @@
       importTranslationsWtsBtn.style.display = 'inline-block';
       exportBtn.style.display = 'inline-block';
       confirmImportedTranslations.closest('label').style.display = 'inline-flex';
-      deleteAllBtn.style.display = 'inline-block'; // ДОБАВЛЕНО: показать кнопку удаления
     } else {
       importBtn.style.display = 'none';
       importTranslationsWtsBtn.style.display = 'none';
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
-      deleteAllBtn.style.display = 'none'; // ДОБАВЛЕНО: скрыть кнопку удаления
     }
     render();
   }
@@ -676,6 +661,11 @@
     cleaned = cleaned.replace(/\|r/g, '');
     cleaned = cleaned.replace(/\s+/g, ' ').trim();
     return cleaned;
+  }
+
+  // Нормализация оригинала для сравнения на идентичность
+  function normalizeOriginalForCompare(text) {
+    return cleanWtsText(text).toLowerCase();
   }
 
   // ========== ПОСТРОЕНИЕ ГРУПП ==========
@@ -837,16 +827,24 @@
   }
 
   // ========== ПОИСК ПОХОЖИХ ПОДТВЕРЖДЁННЫХ ПЕРЕВОДОВ ==========
+  // ИЗМЕНЕНО: исключаем идентичные фразы (по нормализованному оригиналу)
   function findSimilarConfirmedTranslations(original, excludeKey, maxResults = 5) {
     const words = text => text.toLowerCase().replace(/[^a-zа-яё\s]/g, '').split(/\s+/).filter(w => w.length > 2);
     const currentWords = words(original);
     if (currentWords.length === 0) return [];
     const results = [];
 
+    // Нормализованный оригинал текущей фразы для сравнения на идентичность
+    const currentNormalized = normalizeOriginalForCompare(original);
+
     for (const entry of allData) {
       if (entry.key === excludeKey) continue;
       if (!entry.confirmed) continue;
       if (!entry.translation || entry.translation.trim() === '') continue;
+
+      // Пропускаем идентичные фразы (дубликаты)
+      if (normalizeOriginalForCompare(entry.original) === currentNormalized) continue;
+
       const entryWords = words(entry.original);
       const common = currentWords.filter(w => entryWords.includes(w));
       if (common.length === 0) continue;
@@ -1264,7 +1262,7 @@
     return entries;
   }
 
-  // ========== ИМПОРТ ОРИГИНАЛЬНОГО .WTS ==========
+  // ========== ИМПОРТ ОРИГИНАЛЬНОГО .WTS (УНИКАЛЬНЫЕ ФРАЗЫ) ==========
   function importWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1277,68 +1275,115 @@
         }
         if (!window.confirm(`Найдено ${parsed.length} непустых строк. Импортировать?`)) return;
 
-        const translationDict = {};
-        for (const entry of allData) {
-          const cleanOrig = cleanWtsText(entry.original);
-          const translation = entry.translation || '';
-          if (cleanOrig && translation.trim() !== '') {
-            translationDict[cleanOrig] = translation;
+        // Нормализация содержимого для сопоставления
+        const norm = (t) => normalizeOriginalForCompare(t);
+
+        // Дедупликация parsed по номеру (последнее вхождение побеждает)
+        const parsedByTarget = new Map();
+        for (const p of parsed) {
+          parsedByTarget.set(String(p.number), p);
+        }
+        // Дедупликация по содержанию (последний номер побеждает)
+        const parsedByContent = new Map();
+        for (const p of parsedByTarget.values()) {
+          parsedByContent.set(norm(p.content), p);
+        }
+
+        // Индексируем существующие фразы по содержанию
+        const existingByContent = new Map();
+        for (const item of allData) {
+          const c = norm(item.original);
+          if (!existingByContent.has(c)) existingByContent.set(c, item);
+        }
+
+        const replacedContents = new Set(parsedByContent.keys());
+
+        // Итоговая карта: ключ -> запись
+        const finalMap = new Map();
+        for (const item of allData) {
+          const c = norm(item.original);
+          if (replacedContents.has(c)) continue;
+          finalMap.set(item.key, { ...item });
+        }
+
+        const reservedIds = new Set();
+        for (const p of parsedByContent.values()) {
+          reservedIds.add(String(p.number));
+        }
+
+        let maxId = 0;
+        for (const k of finalMap.keys()) maxId = Math.max(maxId, parseInt(k) || 0);
+        for (const k of reservedIds) maxId = Math.max(maxId, parseInt(k) || 0);
+
+        // Переносим существующие фразы, чей ID конфликтует с зарезервированными
+        const itemsToRelocate = [];
+        for (const [key, item] of finalMap) {
+          if (reservedIds.has(String(key))) {
+            itemsToRelocate.push(item);
+            finalMap.delete(key);
           }
+        }
+
+        let nextId = maxId + 1;
+        for (const item of itemsToRelocate) {
+          while (reservedIds.has(String(nextId)) || finalMap.has(String(nextId))) nextId++;
+          finalMap.set(String(nextId), { ...item, key: String(nextId) });
+          nextId++;
+        }
+
+        // Добавляем фразы из файла на их зарезервированные ID
+        for (const p of parsedByContent.values()) {
+          const c = norm(p.content);
+          const existing = existingByContent.get(c);
+          const targetKey = String(p.number);
+
+          if (finalMap.has(targetKey)) {
+            let nid = nextId;
+            while (reservedIds.has(String(nid)) || finalMap.has(String(nid))) nid++;
+            const displaced = finalMap.get(targetKey);
+            finalMap.delete(targetKey);
+            finalMap.set(String(nid), { ...displaced, key: String(nid) });
+            maxId = Math.max(maxId, nid);
+            nextId = nid + 1;
+          }
+
+          finalMap.set(targetKey, {
+            key: targetKey,
+            original: p.content,
+            translation: existing ? (existing.translation || '') : '',
+            translationAuthor: existing ? (existing.translationAuthor || '') : '',
+            translationAuthorName: existing ? (existing.translationAuthorName || '') : '',
+            wtsComment: p.comment || '',
+            userComments: existing ? (existing.userComments || []) : [],
+            confirmed: existing ? (existing.confirmed || false) : false,
+            confirmedBy: existing ? (existing.confirmedBy || '') : '',
+            confirmedByName: existing ? (existing.confirmedByName || '') : '',
+            inactive: existing ? (existing.inactive || false) : false
+          });
         }
 
         const updates = {};
-        const user = getCurrentUserInfo();
-
-        for (const item of parsed) {
-          const key = item.number;
-          const newOriginal = item.content;
-          const newComment = item.comment;
-
-          const existing = allData.find(e => e.key === key);
-
-          let translation = '';
-          let author = '';
-          let authorName = '';
-          let confirmed = false;
-          let confirmedBy = '';
-          let confirmedByName = '';
-          let inactive = false;
-
-          if (existing) {
-            if (existing.translation && existing.translation.trim() !== '') {
-              translation = existing.translation;
-              author = existing.translationAuthor || '';
-              authorName = existing.translationAuthorName || '';
-              confirmed = existing.confirmed || false;
-              confirmedBy = existing.confirmedBy || '';
-              confirmedByName = existing.confirmedByName || '';
-            } else {
-              const cleanOrig = cleanWtsText(newOriginal);
-              if (translationDict[cleanOrig]) {
-                translation = translationDict[cleanOrig];
-              }
-            }
-            inactive = existing.inactive || false;
-          } else {
-            const cleanOrig = cleanWtsText(newOriginal);
-            if (translationDict[cleanOrig]) {
-              translation = translationDict[cleanOrig];
-            }
+        for (const item of allData) {
+          if (!finalMap.has(item.key)) {
+            updates[item.key] = null;
           }
-
+        }
+        for (const [key, item] of finalMap) {
           updates[key] = {
-            original: newOriginal,
-            translation: translation,
-            translationAuthor: author || '',
-            translationAuthorName: authorName || '',
-            wtsComment: newComment,
-            userComments: existing ? (existing.userComments || []) : [],
-            confirmed: confirmed || false,
-            confirmedBy: confirmedBy || '',
-            confirmedByName: confirmedByName || '',
-            inactive: inactive || false
+            original: item.original || '',
+            translation: item.translation || '',
+            translationAuthor: item.translationAuthor || '',
+            translationAuthorName: item.translationAuthorName || '',
+            wtsComment: item.wtsComment || '',
+            userComments: item.userComments || [],
+            confirmed: item.confirmed || false,
+            confirmedBy: item.confirmedBy || '',
+            confirmedByName: item.confirmedByName || '',
+            inactive: item.inactive || false
           };
         }
+
+        const relocatedCount = itemsToRelocate.length;
 
         stringsRef.update(updates)
           .then(() => {
@@ -1348,7 +1393,11 @@
                 importedNumbers = numbers;
                 filterByImported.checked = true;
                 currentPage = 0;
-                alert(`Импортировано ${parsed.length} строк. Включён фильтр "Только загруженные".`);
+                let msg = `Импортировано ${parsed.length} строк. Включён фильтр "Только загруженные".`;
+                if (relocatedCount > 0) {
+                  msg += `\nПеренесено старых фраз (конфликт по ID): ${relocatedCount}.`;
+                }
+                alert(msg);
                 render();
               })
               .catch(err => console.warn('Не удалось сохранить метаданные:', err));
@@ -1464,12 +1513,17 @@
     this.value = '';
   });
 
-  // ========== ЭКСПОРТ ==========
-  function generateWTS(data) {
-    const keys = Object.keys(data).sort((a, b) => parseInt(a) - parseInt(b));
+  // ========== ЭКСПОРТ (ТОЛЬКО ЗАГРУЖЕННЫЕ ФРАЗЫ) ==========
+  function generateWTS(data, filterKeys) {
+    let entries = Object.entries(data);
+    if (filterKeys && filterKeys.length > 0) {
+      const keySet = new Set(filterKeys.map(String));
+      entries = entries.filter(([key]) => keySet.has(key));
+    }
+    entries.sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
+
     let output = '';
-    for (const key of keys) {
-      const entry = data[key];
+    for (const [key, entry] of entries) {
       const original = entry.original || '';
       const translation = entry.translation || '';
       const textToWrite = translation.trim() !== '' ? translation : original;
@@ -1488,7 +1542,38 @@
         alert('Нет данных для экспорта.');
         return;
       }
-      const wtsText = generateWTS(data);
+
+      let useFilter = false;
+      let filterKeys = [];
+      if (importedNumbers && importedNumbers.length > 0) {
+        const existingKeys = Object.keys(data);
+        const available = importedNumbers.filter(num => existingKeys.includes(String(num)));
+        if (available.length > 0) {
+          useFilter = true;
+          filterKeys = available;
+        }
+      }
+
+      let wtsText;
+      let message = '';
+
+      if (useFilter) {
+        wtsText = generateWTS(data, filterKeys);
+        message = `Экспортировано ${filterKeys.length} фраз (только загруженные).`;
+      } else {
+        if (importedNumbers && importedNumbers.length > 0) {
+          if (!confirm('Список загруженных номеров не совпадает ни с одной существующей записью.\nЭкспортировать все фразы?')) {
+            return;
+          }
+        } else {
+          if (!confirm('Нет загруженных номеров. Экспортировать все фразы?')) {
+            return;
+          }
+        }
+        wtsText = generateWTS(data, null);
+        message = `Экспортировано ${Object.keys(data).length} фраз (все записи).`;
+      }
+
       const blob = new Blob([wtsText], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1498,6 +1583,7 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      alert(message);
     });
   }
 
@@ -1556,44 +1642,6 @@
 
   refreshBtn.addEventListener('click', () => {
     stringsRef.once('value', () => render());
-  });
-
-  // ========== УДАЛЕНИЕ ВСЕХ ФРАЗ (ДОБАВЛЕНО) ==========
-  deleteAllBtn.addEventListener('click', function() {
-    if (!currentUser || currentUserRole !== 'editor') {
-      alert('У вас нет прав на удаление всех фраз.');
-      return;
-    }
-
-    // Первое подтверждение
-    if (!confirm('Внимание! Вы собираетесь удалить ВСЕ фразы из базы данных. Это действие НЕОБРАТИМО. Продолжить?')) {
-      return;
-    }
-
-    // Второе подтверждение с вводом кода
-    const code = prompt('Для подтверждения введите слово "УДАЛИТЬ" (без кавычек):');
-    if (code !== 'УДАЛИТЬ') {
-      alert('Операция отменена. Код не совпадает.');
-      return;
-    }
-
-    // Третье предупреждение
-    if (!confirm('Последний шанс! Удалить все строки навсегда?')) {
-      return;
-    }
-
-    // Выполняем удаление
-    stringsRef.remove()
-      .then(() => {
-        alert('Все фразы успешно удалены.');
-        allData = [];
-        // Также можно очистить importedNumbers, но оставим как есть
-        render();
-      })
-      .catch(err => {
-        alert('Ошибка при удалении: ' + err.message);
-        console.error('Ошибка удаления:', err);
-      });
   });
 
   // ========== СЛУШАТЕЛЬ МЕТАДАННЫХ ==========
