@@ -508,6 +508,7 @@
   let currentDisplayName = '';
   let currentUserRole = 'translator';
   let importedNumbers = [];
+  let lastImportStructure = []; // структура последнего импортированного файла: [{id, content, comment}]
 
   // ========== АВТОРИЗАЦИЯ ==========
 
@@ -666,6 +667,21 @@
   // Нормализация оригинала для сравнения на идентичность
   function normalizeOriginalForCompare(text) {
     return cleanWtsText(text).toLowerCase();
+  }
+
+  // Нормализация текста для сопоставления при экспорте по структуре
+  function normalizeForMatch(text) {
+    return cleanWtsText(text || '').toLowerCase();
+  }
+
+  // Индекс: нормализованное содержимое -> ключ в базе
+  function buildContentIndex(data) {
+    const index = new Map();
+    for (const [key, entry] of Object.entries(data)) {
+      const c = normalizeForMatch(entry.original);
+      if (!index.has(c)) index.set(c, key);
+    }
+    return index;
   }
 
   // ========== ПОСТРОЕНИЕ ГРУПП ==========
@@ -827,14 +843,12 @@
   }
 
   // ========== ПОИСК ПОХОЖИХ ПОДТВЕРЖДЁННЫХ ПЕРЕВОДОВ ==========
-  // ИЗМЕНЕНО: исключаем идентичные фразы (по нормализованному оригиналу)
   function findSimilarConfirmedTranslations(original, excludeKey, maxResults = 5) {
     const words = text => text.toLowerCase().replace(/[^a-zа-яё\s]/g, '').split(/\s+/).filter(w => w.length > 2);
     const currentWords = words(original);
     if (currentWords.length === 0) return [];
     const results = [];
 
-    // Нормализованный оригинал текущей фразы для сравнения на идентичность
     const currentNormalized = normalizeOriginalForCompare(original);
 
     for (const entry of allData) {
@@ -842,7 +856,7 @@
       if (!entry.confirmed) continue;
       if (!entry.translation || entry.translation.trim() === '') continue;
 
-      // Пропускаем идентичные фразы (дубликаты)
+      // Пропускаем идентичные фразы
       if (normalizeOriginalForCompare(entry.original) === currentNormalized) continue;
 
       const entryWords = words(entry.original);
@@ -1388,9 +1402,21 @@
         stringsRef.update(updates)
           .then(() => {
             const numbers = parsed.map(item => item.number);
-            metadataRef.set({ importedNumbers: numbers })
+
+            // Сохраняем структуру файла (со всеми дубликатами ID)
+            const structure = parsed.map(item => ({
+              id: String(item.number),
+              content: item.content,
+              comment: item.comment || ''
+            }));
+
+            metadataRef.set({
+              importedNumbers: numbers,
+              lastImportStructure: structure
+            })
               .then(() => {
                 importedNumbers = numbers;
+                lastImportStructure = structure;
                 filterByImported.checked = true;
                 currentPage = 0;
                 let msg = `Импортировано ${parsed.length} строк. Включён фильтр "Только загруженные".`;
@@ -1513,7 +1539,8 @@
     this.value = '';
   });
 
-  // ========== ЭКСПОРТ (ТОЛЬКО ЗАГРУЖЕННЫЕ ФРАЗЫ) ==========
+  // ========== ЭКСПОРТ ==========
+  // Обычный экспорт (без структуры)
   function generateWTS(data, filterKeys) {
     let entries = Object.entries(data);
     if (filterKeys && filterKeys.length > 0) {
@@ -1535,6 +1562,48 @@
     return output;
   }
 
+  // Экспорт с восстановлением исходной структуры файла (с дубликатами по ID)
+  function generateWTSFromStructure(data, structure) {
+    const index = buildContentIndex(data);
+    const usedKeys = new Set();
+    let output = '';
+    let exportedCount = 0;
+
+    // 1. Проходим по сохранённой структуре и выводим на исходных ID
+    for (const s of structure) {
+      const c = normalizeForMatch(s.content);
+      const dbKey = index.get(c);
+      if (!dbKey) continue; // фраза была удалена из базы — пропускаем
+      const entry = data[dbKey];
+      const translation = entry.translation || '';
+      const textToWrite = translation.trim() !== '' ? translation : s.content;
+      const comment = s.comment || entry.wtsComment || '';
+      output += `STRING ${s.id}`;
+      if (comment) output += ` // ${comment}`;
+      output += `\n{\n${textToWrite}\n}\n\n`;
+      usedKeys.add(dbKey);
+      exportedCount++;
+    }
+
+    // 2. Оставшиеся записи (новые, которых не было в исходном файле) — в конец
+    const remainingKeys = Object.keys(data)
+      .filter(k => !usedKeys.has(k))
+      .sort((a, b) => parseInt(a) - parseInt(b));
+    for (const key of remainingKeys) {
+      const entry = data[key];
+      const original = entry.original || '';
+      const translation = entry.translation || '';
+      const textToWrite = translation.trim() !== '' ? translation : original;
+      const comment = entry.wtsComment || '';
+      output += `STRING ${key}`;
+      if (comment) output += ` // ${comment}`;
+      output += `\n{\n${textToWrite}\n}\n\n`;
+      exportedCount++;
+    }
+
+    return { text: output, count: exportedCount };
+  }
+
   function exportWTS() {
     stringsRef.once('value', (snapshot) => {
       const data = snapshot.val();
@@ -1543,35 +1612,43 @@
         return;
       }
 
-      let useFilter = false;
-      let filterKeys = [];
-      if (importedNumbers && importedNumbers.length > 0) {
-        const existingKeys = Object.keys(data);
-        const available = importedNumbers.filter(num => existingKeys.includes(String(num)));
-        if (available.length > 0) {
-          useFilter = true;
-          filterKeys = available;
-        }
-      }
-
       let wtsText;
       let message = '';
 
-      if (useFilter) {
-        wtsText = generateWTS(data, filterKeys);
-        message = `Экспортировано ${filterKeys.length} фраз (только загруженные).`;
+      // Если есть сохранённая структура последнего импорта — используем её
+      if (lastImportStructure && lastImportStructure.length > 0) {
+        const result = generateWTSFromStructure(data, lastImportStructure);
+        wtsText = result.text;
+        message = `Экспортировано ${result.count} фраз по структуре последнего загруженного файла.`;
       } else {
+        // Старое поведение (без структуры)
+        let useFilter = false;
+        let filterKeys = [];
         if (importedNumbers && importedNumbers.length > 0) {
-          if (!confirm('Список загруженных номеров не совпадает ни с одной существующей записью.\nЭкспортировать все фразы?')) {
-            return;
-          }
-        } else {
-          if (!confirm('Нет загруженных номеров. Экспортировать все фразы?')) {
-            return;
+          const existingKeys = Object.keys(data);
+          const available = importedNumbers.filter(num => existingKeys.includes(String(num)));
+          if (available.length > 0) {
+            useFilter = true;
+            filterKeys = available;
           }
         }
-        wtsText = generateWTS(data, null);
-        message = `Экспортировано ${Object.keys(data).length} фраз (все записи).`;
+
+        if (useFilter) {
+          wtsText = generateWTS(data, filterKeys);
+          message = `Экспортировано ${filterKeys.length} фраз (только загруженные).`;
+        } else {
+          if (importedNumbers && importedNumbers.length > 0) {
+            if (!confirm('Список загруженных номеров не совпадает ни с одной существующей записью.\nЭкспортировать все фразы?')) {
+              return;
+            }
+          } else {
+            if (!confirm('Нет загруженных номеров. Экспортировать все фразы?')) {
+              return;
+            }
+          }
+          wtsText = generateWTS(data, null);
+          message = `Экспортировано ${Object.keys(data).length} фраз (все записи).`;
+        }
       }
 
       const blob = new Blob([wtsText], { type: 'text/plain;charset=utf-8' });
@@ -1649,6 +1726,7 @@
     const data = snapshot.val();
     if (data && data.importedNumbers) {
       importedNumbers = data.importedNumbers;
+      lastImportStructure = Array.isArray(data.lastImportStructure) ? data.lastImportStructure : [];
       if (filterByImported.checked) {
         render();
       }
@@ -1660,6 +1738,7 @@
     const data = snapshot.val();
     if (data && data.importedNumbers) {
       importedNumbers = data.importedNumbers;
+      lastImportStructure = Array.isArray(data.lastImportStructure) ? data.lastImportStructure : [];
       filterByImported.checked = true;
       render();
     }
