@@ -509,6 +509,7 @@
   let currentUserRole = 'translator';
   let importedNumbers = [];
   let lastImportStructure = []; // структура последнего импортированного файла: [{id, content, comment}]
+  let lastTranslationImportIds = []; // ID фраз, загруженных из последнего WTS-файла переводов
 
   // ========== АВТОРИЗАЦИЯ ==========
 
@@ -664,17 +665,14 @@
     return cleaned;
   }
 
-  // Нормализация оригинала для сравнения на идентичность
   function normalizeOriginalForCompare(text) {
     return cleanWtsText(text).toLowerCase();
   }
 
-  // Нормализация текста для сопоставления при экспорте по структуре
   function normalizeForMatch(text) {
     return cleanWtsText(text || '').toLowerCase();
   }
 
-  // Индекс: нормализованное содержимое -> ключ в базе
   function buildContentIndex(data) {
     const index = new Map();
     for (const [key, entry] of Object.entries(data)) {
@@ -856,7 +854,6 @@
       if (!entry.confirmed) continue;
       if (!entry.translation || entry.translation.trim() === '') continue;
 
-      // Пропускаем идентичные фразы
       if (normalizeOriginalForCompare(entry.original) === currentNormalized) continue;
 
       const entryWords = words(entry.original);
@@ -1289,21 +1286,17 @@
         }
         if (!window.confirm(`Найдено ${parsed.length} непустых строк. Импортировать?`)) return;
 
-        // Нормализация содержимого для сопоставления
         const norm = (t) => normalizeOriginalForCompare(t);
 
-        // Дедупликация parsed по номеру (последнее вхождение побеждает)
         const parsedByTarget = new Map();
         for (const p of parsed) {
           parsedByTarget.set(String(p.number), p);
         }
-        // Дедупликация по содержанию (последний номер побеждает)
         const parsedByContent = new Map();
         for (const p of parsedByTarget.values()) {
           parsedByContent.set(norm(p.content), p);
         }
 
-        // Индексируем существующие фразы по содержанию
         const existingByContent = new Map();
         for (const item of allData) {
           const c = norm(item.original);
@@ -1312,7 +1305,6 @@
 
         const replacedContents = new Set(parsedByContent.keys());
 
-        // Итоговая карта: ключ -> запись
         const finalMap = new Map();
         for (const item of allData) {
           const c = norm(item.original);
@@ -1329,7 +1321,6 @@
         for (const k of finalMap.keys()) maxId = Math.max(maxId, parseInt(k) || 0);
         for (const k of reservedIds) maxId = Math.max(maxId, parseInt(k) || 0);
 
-        // Переносим существующие фразы, чей ID конфликтует с зарезервированными
         const itemsToRelocate = [];
         for (const [key, item] of finalMap) {
           if (reservedIds.has(String(key))) {
@@ -1345,7 +1336,6 @@
           nextId++;
         }
 
-        // Добавляем фразы из файла на их зарезервированные ID
         for (const p of parsedByContent.values()) {
           const c = norm(p.content);
           const existing = existingByContent.get(c);
@@ -1403,13 +1393,14 @@
           .then(() => {
             const numbers = parsed.map(item => item.number);
 
-            // Сохраняем структуру файла (со всеми дубликатами ID)
             const structure = parsed.map(item => ({
               id: String(item.number),
               content: item.content,
               comment: item.comment || ''
             }));
 
+            // Обратите внимание: этот set() удаляет lastTranslationImportIds
+            // (список переводов, загруженных ранее), т.к. он относится к предыдущему набору фраз
             metadataRef.set({
               importedNumbers: numbers,
               lastImportStructure: structure
@@ -1417,6 +1408,7 @@
               .then(() => {
                 importedNumbers = numbers;
                 lastImportStructure = structure;
+                lastTranslationImportIds = [];
                 filterByImported.checked = true;
                 currentPage = 0;
                 let msg = `Импортировано ${parsed.length} строк. Включён фильтр "Только загруженные".`;
@@ -1508,7 +1500,17 @@
         }
         Promise.all(promiseArray)
           .then(() => {
-            alert(`Обновлено переводов: ${count}`);
+            // Сохраняем список ID фраз, загруженных из этого файла переводов.
+            // Он будет использоваться при экспорте — выгружаться будут только эти фразы.
+            const importedIds = Object.keys(updates);
+
+            metadataRef.update({ lastTranslationImportIds: importedIds })
+              .then(() => {
+                lastTranslationImportIds = importedIds;
+              })
+              .catch(err => console.warn('Не удалось сохранить список загруженных ID:', err));
+
+            // Локальное обновление
             for (const [key, data] of Object.entries(updates)) {
               const localItem = allData.find(d => d.key === key);
               if (localItem) {
@@ -1523,6 +1525,7 @@
               }
             }
             render();
+            alert(`Обновлено переводов: ${count}.\nПри экспорте будут выгружены только эти фразы.`);
           })
           .catch(err => alert('Ошибка при обновлении переводов: ' + err.message));
       } catch (err) {
@@ -1540,7 +1543,6 @@
   });
 
   // ========== ЭКСПОРТ ==========
-  // Обычный экспорт (без структуры)
   function generateWTS(data, filterKeys) {
     let entries = Object.entries(data);
     if (filterKeys && filterKeys.length > 0) {
@@ -1562,48 +1564,6 @@
     return output;
   }
 
-  // Экспорт с восстановлением исходной структуры файла (с дубликатами по ID)
-  function generateWTSFromStructure(data, structure) {
-    const index = buildContentIndex(data);
-    const usedKeys = new Set();
-    let output = '';
-    let exportedCount = 0;
-
-    // 1. Проходим по сохранённой структуре и выводим на исходных ID
-    for (const s of structure) {
-      const c = normalizeForMatch(s.content);
-      const dbKey = index.get(c);
-      if (!dbKey) continue; // фраза была удалена из базы — пропускаем
-      const entry = data[dbKey];
-      const translation = entry.translation || '';
-      const textToWrite = translation.trim() !== '' ? translation : s.content;
-      const comment = s.comment || entry.wtsComment || '';
-      output += `STRING ${s.id}`;
-      if (comment) output += ` // ${comment}`;
-      output += `\n{\n${textToWrite}\n}\n\n`;
-      usedKeys.add(dbKey);
-      exportedCount++;
-    }
-
-    // 2. Оставшиеся записи (новые, которых не было в исходном файле) — в конец
-    const remainingKeys = Object.keys(data)
-      .filter(k => !usedKeys.has(k))
-      .sort((a, b) => parseInt(a) - parseInt(b));
-    for (const key of remainingKeys) {
-      const entry = data[key];
-      const original = entry.original || '';
-      const translation = entry.translation || '';
-      const textToWrite = translation.trim() !== '' ? translation : original;
-      const comment = entry.wtsComment || '';
-      output += `STRING ${key}`;
-      if (comment) output += ` // ${comment}`;
-      output += `\n{\n${textToWrite}\n}\n\n`;
-      exportedCount++;
-    }
-
-    return { text: output, count: exportedCount };
-  }
-
   function exportWTS() {
     stringsRef.once('value', (snapshot) => {
       const data = snapshot.val();
@@ -1615,13 +1575,63 @@
       let wtsText;
       let message = '';
 
-      // Если есть сохранённая структура последнего импорта — используем её
-      if (lastImportStructure && lastImportStructure.length > 0) {
-        const result = generateWTSFromStructure(data, lastImportStructure);
-        wtsText = result.text;
-        message = `Экспортировано ${result.count} фраз по структуре последнего загруженного файла.`;
-      } else {
-        // Старое поведение (без структуры)
+      // ПРИОРИТЕТ 1: если пользователь загружал файл переводов —
+      // выгружаем только те фразы, чьи ID были в этом файле.
+      if (lastTranslationImportIds && lastTranslationImportIds.length > 0) {
+        const keySet = new Set(lastTranslationImportIds.map(String));
+        const filteredData = {};
+        for (const [k, v] of Object.entries(data)) {
+          if (keySet.has(k)) filteredData[k] = v;
+        }
+        if (Object.keys(filteredData).length === 0) {
+          alert('Ни одна из фраз, загруженных в последнем файле переводов, не найдена в базе. Экспорт отменён.');
+          return;
+        }
+        wtsText = generateWTS(filteredData, null);
+        message = `Экспортировано ${Object.keys(filteredData).length} фраз (только из последнего файла переводов).`;
+      }
+      // ПРИОРИТЕТ 2: структура последнего импорта оригинального WTS
+      else if (lastImportStructure && lastImportStructure.length > 0) {
+        const index = buildContentIndex(data);
+        const usedKeys = new Set();
+        let output = '';
+        let exportedCount = 0;
+
+        for (const s of lastImportStructure) {
+          const c = normalizeForMatch(s.content);
+          const dbKey = index.get(c);
+          if (!dbKey) continue;
+          const entry = data[dbKey];
+          const translation = entry.translation || '';
+          const textToWrite = translation.trim() !== '' ? translation : s.content;
+          const comment = s.comment || entry.wtsComment || '';
+          output += `STRING ${s.id}`;
+          if (comment) output += ` // ${comment}`;
+          output += `\n{\n${textToWrite}\n}\n\n`;
+          usedKeys.add(dbKey);
+          exportedCount++;
+        }
+
+        const remainingKeys = Object.keys(data)
+          .filter(k => !usedKeys.has(k))
+          .sort((a, b) => parseInt(a) - parseInt(b));
+        for (const key of remainingKeys) {
+          const entry = data[key];
+          const original = entry.original || '';
+          const translation = entry.translation || '';
+          const textToWrite = translation.trim() !== '' ? translation : original;
+          const comment = entry.wtsComment || '';
+          output += `STRING ${key}`;
+          if (comment) output += ` // ${comment}`;
+          output += `\n{\n${textToWrite}\n}\n\n`;
+          exportedCount++;
+        }
+
+        wtsText = output;
+        message = `Экспортировано ${exportedCount} фраз по структуре последнего загруженного файла.`;
+      }
+      // ПРИОРИТЕТ 3: обычный экспорт
+      else {
         let useFilter = false;
         let filterKeys = [];
         if (importedNumbers && importedNumbers.length > 0) {
@@ -1727,6 +1737,7 @@
     if (data && data.importedNumbers) {
       importedNumbers = data.importedNumbers;
       lastImportStructure = Array.isArray(data.lastImportStructure) ? data.lastImportStructure : [];
+      lastTranslationImportIds = Array.isArray(data.lastTranslationImportIds) ? data.lastTranslationImportIds : [];
       if (filterByImported.checked) {
         render();
       }
@@ -1739,6 +1750,7 @@
     if (data && data.importedNumbers) {
       importedNumbers = data.importedNumbers;
       lastImportStructure = Array.isArray(data.lastImportStructure) ? data.lastImportStructure : [];
+      lastTranslationImportIds = Array.isArray(data.lastTranslationImportIds) ? data.lastTranslationImportIds : [];
       filterByImported.checked = true;
       render();
     }
