@@ -1435,16 +1435,6 @@
   });
 
   // ========== ИМПОРТ ПЕРЕВОДОВ ИЗ WTS — СОПОСТАВЛЕНИЕ ПО СОДЕРЖИМОМУ ==========
-  //
-  // Логика:
-  //   1. По ID из загружаемого файла находим оригинальный текст
-  //      через lastImportStructure (структуру последнего war3_map.wts).
-  //   2. По нормализованному оригинальному тексту находим запись в БД.
-  //   3. Записываем перевод. Если стоит галочка «Подтвердить импорт» —
-  //      помечаем перевод как подтверждённый.
-  //   4. Если перевод совпадает с оригиналом — считаем фразу непереведённой
-  //      и пропускаем.
-  //
   function importTranslationsFromWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1488,7 +1478,6 @@
           if (struct) {
             origContent = struct.content;
           } else {
-            // Запасной вариант: пробуем найти в БД по ID напрямую
             const byId = allData.find(d => d.key === id);
             if (byId) origContent = byId.original;
           }
@@ -1549,7 +1538,6 @@
         }
         Promise.all(promiseArray)
           .then(() => {
-            // Обновляем локальные данные
             for (const [key, data] of Object.entries(updates)) {
               const localItem = allData.find(d => d.key === key);
               if (localItem) {
@@ -1586,58 +1574,22 @@
   });
 
   // ========== ЭКСПОРТ ==========
-  function generateWTS(data, filterKeys) {
-    let entries = Object.entries(data);
-    if (filterKeys && filterKeys.length > 0) {
-      const keySet = new Set(filterKeys.map(String));
-      entries = entries.filter(([key]) => keySet.has(key));
-    }
-    entries.sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
-
-    let output = '';
-    for (const [key, entry] of entries) {
-      const original = entry.original || '';
-      const translation = entry.translation || '';
-      const textToWrite = translation.trim() !== '' ? translation : original;
-      const comment = entry.wtsComment || '';
-      output += `STRING ${key}`;
-      if (comment) output += ` // ${comment}`;
-      output += `\n{\n${textToWrite}\n}\n\n`;
-    }
-    return output;
-  }
-
+  // Экспорт только тех фраз, которые были в структуре последнего загруженного файла.
+  // Никаких "остатков" из базы не добавляется.
   function generateWTSFromStructure(data, structure) {
     const index = buildContentIndex(data);
-    const usedKeys = new Set();
     let output = '';
     let exportedCount = 0;
 
     for (const s of structure) {
       const c = normalizeForMatch(s.content);
       const dbKey = index.get(c);
-      if (!dbKey) continue;
+      if (!dbKey) continue; // фраза удалена из базы — пропускаем
       const entry = data[dbKey];
       const translation = entry.translation || '';
       const textToWrite = translation.trim() !== '' ? translation : s.content;
       const comment = s.comment || entry.wtsComment || '';
       output += `STRING ${s.id}`;
-      if (comment) output += ` // ${comment}`;
-      output += `\n{\n${textToWrite}\n}\n\n`;
-      usedKeys.add(dbKey);
-      exportedCount++;
-    }
-
-    const remainingKeys = Object.keys(data)
-      .filter(k => !usedKeys.has(k))
-      .sort((a, b) => parseInt(a) - parseInt(b));
-    for (const key of remainingKeys) {
-      const entry = data[key];
-      const original = entry.original || '';
-      const translation = entry.translation || '';
-      const textToWrite = translation.trim() !== '' ? translation : original;
-      const comment = entry.wtsComment || '';
-      output += `STRING ${key}`;
       if (comment) output += ` // ${comment}`;
       output += `\n{\n${textToWrite}\n}\n\n`;
       exportedCount++;
@@ -1654,44 +1606,18 @@
         return;
       }
 
-      let wtsText;
-      let message = '';
-
-      if (lastImportStructure && lastImportStructure.length > 0) {
-        const result = generateWTSFromStructure(data, lastImportStructure);
-        wtsText = result.text;
-        message = `Экспортировано ${result.count} фраз по структуре последнего загруженного файла.`;
-      } else {
-        let useFilter = false;
-        let filterKeys = [];
-        if (importedNumbers && importedNumbers.length > 0) {
-          const existingKeys = Object.keys(data);
-          const available = importedNumbers.filter(num => existingKeys.includes(String(num)));
-          if (available.length > 0) {
-            useFilter = true;
-            filterKeys = available;
-          }
-        }
-
-        if (useFilter) {
-          wtsText = generateWTS(data, filterKeys);
-          message = `Экспортировано ${filterKeys.length} фраз (только загруженные).`;
-        } else {
-          if (importedNumbers && importedNumbers.length > 0) {
-            if (!confirm('Список загруженных номеров не совпадает ни с одной существующей записью.\nЭкспортировать все фразы?')) {
-              return;
-            }
-          } else {
-            if (!confirm('Нет загруженных номеров. Экспортировать все фразы?')) {
-              return;
-            }
-          }
-          wtsText = generateWTS(data, null);
-          message = `Экспортировано ${Object.keys(data).length} фраз (все записи).`;
-        }
+      if (!lastImportStructure || lastImportStructure.length === 0) {
+        alert('Нет данных о последнем загруженном файле.\nСначала загрузите .wts с оригинальными фразами.');
+        return;
       }
 
-      const blob = new Blob([wtsText], { type: 'text/plain;charset=utf-8' });
+      const result = generateWTSFromStructure(data, lastImportStructure);
+      if (result.count === 0) {
+        alert('Ни одна фраза из последнего загруженного файла не найдена в базе. Экспорт отменён.');
+        return;
+      }
+
+      const blob = new Blob([result.text], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -1700,7 +1626,7 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      alert(message);
+      alert(`Экспортировано ${result.count} фраз по структуре последнего загруженного файла.`);
     });
   }
 
