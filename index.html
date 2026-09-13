@@ -371,7 +371,7 @@
     <input type="file" id="fileInput" accept=".wts">
     <button class="import-translations-wts-btn" id="importTranslationsWtsBtn" style="display:none;">📥 Загрузить переводы .wts</button>
     <input type="file" id="translationsWtsInput" accept=".wts" style="display:none;">
-    <label style="display:inline-flex;align-items:center;gap:4px;font-size:14px;background:#e0f2f1;padding:4px 12px;border-radius:20px;cursor:pointer;">
+    <label style="display:inline-flex;align-items:center;gap:4px;font-size:14px;background:#e0f2f1;padding:4px 12px;border-radius:20px;cursor:pointer;" title="Если отмечено — загруженные переводы будут помечены как подтверждённые">
       <input type="checkbox" id="confirmImportedTranslations"> Подтвердить импорт
     </label>
     <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts</button>
@@ -509,7 +509,6 @@
   let currentUserRole = 'translator';
   let importedNumbers = [];
   let lastImportStructure = []; // структура последнего импортированного файла: [{id, content, comment}]
-  let lastTranslationImportIds = []; // ID фраз, загруженных из последнего WTS-файла переводов
 
   // ========== АВТОРИЗАЦИЯ ==========
 
@@ -1399,8 +1398,6 @@
               comment: item.comment || ''
             }));
 
-            // Обратите внимание: этот set() удаляет lastTranslationImportIds
-            // (список переводов, загруженных ранее), т.к. он относится к предыдущему набору фраз
             metadataRef.set({
               importedNumbers: numbers,
               lastImportStructure: structure
@@ -1408,7 +1405,6 @@
               .then(() => {
                 importedNumbers = numbers;
                 lastImportStructure = structure;
-                lastTranslationImportIds = [];
                 filterByImported.checked = true;
                 currentPage = 0;
                 let msg = `Импортировано ${parsed.length} строк. Включён фильтр "Только загруженные".`;
@@ -1438,7 +1434,17 @@
     this.value = '';
   });
 
-  // ========== ИМПОРТ ПЕРЕВОДОВ ИЗ WTS ПО НОМЕРАМ ==========
+  // ========== ИМПОРТ ПЕРЕВОДОВ ИЗ WTS — СОПОСТАВЛЕНИЕ ПО СОДЕРЖИМОМУ ==========
+  //
+  // Логика:
+  //   1. По ID из загружаемого файла находим оригинальный текст
+  //      через lastImportStructure (структуру последнего war3_map.wts).
+  //   2. По нормализованному оригинальному тексту находим запись в БД.
+  //   3. Записываем перевод. Если стоит галочка «Подтвердить импорт» —
+  //      помечаем перевод как подтверждённый.
+  //   4. Если перевод совпадает с оригиналом — считаем фразу непереведённой
+  //      и пропускаем.
+  //
   function importTranslationsFromWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1451,48 +1457,91 @@
         }
 
         const user = getCurrentUserInfo();
-        const confirm = confirmImportedTranslations.checked;
+        const shouldConfirm = confirmImportedTranslations.checked;
+
+        // Карта: ID → {content, comment} из последнего оригинального WTS
+        const structureById = new Map();
+        for (const s of lastImportStructure) {
+          structureById.set(String(s.id), s);
+        }
+
+        // Карта: нормализованное содержимое оригинала → ключ в БД
+        const dbByContent = new Map();
+        for (const item of allData) {
+          const c = normalizeOriginalForCompare(item.original);
+          if (!dbByContent.has(c)) dbByContent.set(c, item.key);
+        }
 
         const updates = {};
-        let count = 0;
+        let added = 0;
+        let skippedUntranslated = 0;
         const notFound = [];
 
         for (const item of parsed) {
-          const key = item.number;
-          const translationText = item.content.trim();
-          if (!translationText) continue;
+          const id = String(item.number);
+          const transContent = item.content.trim();
+          if (!transContent) continue;
 
-          const existing = allData.find(e => e.key === key);
-          if (!existing) {
-            notFound.push(key);
+          // 1. Находим оригинальный текст по ID через структуру
+          let origContent = null;
+          const struct = structureById.get(id);
+          if (struct) {
+            origContent = struct.content;
+          } else {
+            // Запасной вариант: пробуем найти в БД по ID напрямую
+            const byId = allData.find(d => d.key === id);
+            if (byId) origContent = byId.original;
+          }
+          if (!origContent) {
+            notFound.push(id);
+            continue;
+          }
+
+          // 2. Пропускаем непереведённые фразы (перевод совпадает с оригиналом)
+          if (normalizeOriginalForCompare(transContent) === normalizeOriginalForCompare(origContent)) {
+            skippedUntranslated++;
+            continue;
+          }
+
+          // 3. Ищем запись в БД по содержимому оригинала
+          const normOrig = normalizeOriginalForCompare(origContent);
+          const dbKey = dbByContent.get(normOrig);
+          if (!dbKey) {
+            notFound.push(id);
             continue;
           }
 
           const updateData = {
-            translation: translationText,
+            translation: transContent,
             translationAuthor: user.uid,
             translationAuthorName: user.displayName
           };
-          if (confirm) {
+          if (shouldConfirm) {
             updateData.confirmed = true;
             updateData.confirmedBy = user.uid;
             updateData.confirmedByName = user.displayName;
           }
-          updates[key] = updateData;
-          count++;
+          updates[dbKey] = updateData;
+          added++;
         }
 
-        if (count === 0) {
-          let msg = 'Не найдено совпадений по номерам. Ни один перевод не обновлён.';
+        if (added === 0) {
+          let msg = `Не найдено переводов для загрузки.\nПропущено непереведённых фраз: ${skippedUntranslated}.`;
           if (notFound.length > 0) {
-            msg += `\nОтсутствуют в базе номера: ${notFound.slice(0, 20).join(', ')}${notFound.length > 20 ? '...' : ''}`;
+            msg += `\nНе найдено в базе по ID: ${notFound.length}.`;
           }
           alert(msg);
           return;
         }
 
-        const confirmMsg = confirm ? ' (будут помечены как подтверждённые)' : ' (статус подтверждения не изменится)';
-        if (!window.confirm(`Найдено ${count} совпадений. Обновить переводы для этих строк?${confirmMsg}`)) return;
+        const confirmMsg = shouldConfirm
+          ? ' (будут помечены как ПОДТВЕРЖДЁННЫЕ)'
+          : ' (без подтверждения)';
+        if (!window.confirm(
+          `Найдено переводов для загрузки: ${added}.\n` +
+          `Пропущено непереведённых: ${skippedUntranslated}.\n` +
+          `Не найдено в базе: ${notFound.length}.${confirmMsg}\n\nПродолжить?`
+        )) return;
 
         const promiseArray = [];
         for (const [key, data] of Object.entries(updates)) {
@@ -1500,24 +1549,14 @@
         }
         Promise.all(promiseArray)
           .then(() => {
-            // Сохраняем список ID фраз, загруженных из этого файла переводов.
-            // Он будет использоваться при экспорте — выгружаться будут только эти фразы.
-            const importedIds = Object.keys(updates);
-
-            metadataRef.update({ lastTranslationImportIds: importedIds })
-              .then(() => {
-                lastTranslationImportIds = importedIds;
-              })
-              .catch(err => console.warn('Не удалось сохранить список загруженных ID:', err));
-
-            // Локальное обновление
+            // Обновляем локальные данные
             for (const [key, data] of Object.entries(updates)) {
               const localItem = allData.find(d => d.key === key);
               if (localItem) {
                 localItem.translation = data.translation;
                 localItem.translationAuthor = data.translationAuthor;
                 localItem.translationAuthorName = data.translationAuthorName;
-                if (confirm) {
+                if (shouldConfirm) {
                   localItem.confirmed = data.confirmed;
                   localItem.confirmedBy = data.confirmedBy;
                   localItem.confirmedByName = data.confirmedByName;
@@ -1525,7 +1564,11 @@
               }
             }
             render();
-            alert(`Обновлено переводов: ${count}.\nПри экспорте будут выгружены только эти фразы.`);
+            alert(
+              `Обновлено переводов: ${added}.\n` +
+              `Пропущено непереведённых: ${skippedUntranslated}.` +
+              (notFound.length > 0 ? `\nНе найдено: ${notFound.length}.` : '')
+            );
           })
           .catch(err => alert('Ошибка при обновлении переводов: ' + err.message));
       } catch (err) {
@@ -1564,6 +1607,45 @@
     return output;
   }
 
+  function generateWTSFromStructure(data, structure) {
+    const index = buildContentIndex(data);
+    const usedKeys = new Set();
+    let output = '';
+    let exportedCount = 0;
+
+    for (const s of structure) {
+      const c = normalizeForMatch(s.content);
+      const dbKey = index.get(c);
+      if (!dbKey) continue;
+      const entry = data[dbKey];
+      const translation = entry.translation || '';
+      const textToWrite = translation.trim() !== '' ? translation : s.content;
+      const comment = s.comment || entry.wtsComment || '';
+      output += `STRING ${s.id}`;
+      if (comment) output += ` // ${comment}`;
+      output += `\n{\n${textToWrite}\n}\n\n`;
+      usedKeys.add(dbKey);
+      exportedCount++;
+    }
+
+    const remainingKeys = Object.keys(data)
+      .filter(k => !usedKeys.has(k))
+      .sort((a, b) => parseInt(a) - parseInt(b));
+    for (const key of remainingKeys) {
+      const entry = data[key];
+      const original = entry.original || '';
+      const translation = entry.translation || '';
+      const textToWrite = translation.trim() !== '' ? translation : original;
+      const comment = entry.wtsComment || '';
+      output += `STRING ${key}`;
+      if (comment) output += ` // ${comment}`;
+      output += `\n{\n${textToWrite}\n}\n\n`;
+      exportedCount++;
+    }
+
+    return { text: output, count: exportedCount };
+  }
+
   function exportWTS() {
     stringsRef.once('value', (snapshot) => {
       const data = snapshot.val();
@@ -1575,63 +1657,11 @@
       let wtsText;
       let message = '';
 
-      // ПРИОРИТЕТ 1: если пользователь загружал файл переводов —
-      // выгружаем только те фразы, чьи ID были в этом файле.
-      if (lastTranslationImportIds && lastTranslationImportIds.length > 0) {
-        const keySet = new Set(lastTranslationImportIds.map(String));
-        const filteredData = {};
-        for (const [k, v] of Object.entries(data)) {
-          if (keySet.has(k)) filteredData[k] = v;
-        }
-        if (Object.keys(filteredData).length === 0) {
-          alert('Ни одна из фраз, загруженных в последнем файле переводов, не найдена в базе. Экспорт отменён.');
-          return;
-        }
-        wtsText = generateWTS(filteredData, null);
-        message = `Экспортировано ${Object.keys(filteredData).length} фраз (только из последнего файла переводов).`;
-      }
-      // ПРИОРИТЕТ 2: структура последнего импорта оригинального WTS
-      else if (lastImportStructure && lastImportStructure.length > 0) {
-        const index = buildContentIndex(data);
-        const usedKeys = new Set();
-        let output = '';
-        let exportedCount = 0;
-
-        for (const s of lastImportStructure) {
-          const c = normalizeForMatch(s.content);
-          const dbKey = index.get(c);
-          if (!dbKey) continue;
-          const entry = data[dbKey];
-          const translation = entry.translation || '';
-          const textToWrite = translation.trim() !== '' ? translation : s.content;
-          const comment = s.comment || entry.wtsComment || '';
-          output += `STRING ${s.id}`;
-          if (comment) output += ` // ${comment}`;
-          output += `\n{\n${textToWrite}\n}\n\n`;
-          usedKeys.add(dbKey);
-          exportedCount++;
-        }
-
-        const remainingKeys = Object.keys(data)
-          .filter(k => !usedKeys.has(k))
-          .sort((a, b) => parseInt(a) - parseInt(b));
-        for (const key of remainingKeys) {
-          const entry = data[key];
-          const original = entry.original || '';
-          const translation = entry.translation || '';
-          const textToWrite = translation.trim() !== '' ? translation : original;
-          const comment = entry.wtsComment || '';
-          output += `STRING ${key}`;
-          if (comment) output += ` // ${comment}`;
-          output += `\n{\n${textToWrite}\n}\n\n`;
-          exportedCount++;
-        }
-
-        wtsText = output;
-        message = `Экспортировано ${exportedCount} фраз по структуре последнего загруженного файла.`;
-      }
-      // ПРИОРИТЕТ 3: обычный экспорт
-      else {
+      if (lastImportStructure && lastImportStructure.length > 0) {
+        const result = generateWTSFromStructure(data, lastImportStructure);
+        wtsText = result.text;
+        message = `Экспортировано ${result.count} фраз по структуре последнего загруженного файла.`;
+      } else {
         let useFilter = false;
         let filterKeys = [];
         if (importedNumbers && importedNumbers.length > 0) {
@@ -1737,7 +1767,6 @@
     if (data && data.importedNumbers) {
       importedNumbers = data.importedNumbers;
       lastImportStructure = Array.isArray(data.lastImportStructure) ? data.lastImportStructure : [];
-      lastTranslationImportIds = Array.isArray(data.lastTranslationImportIds) ? data.lastTranslationImportIds : [];
       if (filterByImported.checked) {
         render();
       }
@@ -1750,7 +1779,6 @@
     if (data && data.importedNumbers) {
       importedNumbers = data.importedNumbers;
       lastImportStructure = Array.isArray(data.lastImportStructure) ? data.lastImportStructure : [];
-      lastTranslationImportIds = Array.isArray(data.lastTranslationImportIds) ? data.lastTranslationImportIds : [];
       filterByImported.checked = true;
       render();
     }
