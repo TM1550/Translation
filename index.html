@@ -826,15 +826,40 @@
     stringsRef.child(key).update(updateData).catch(err => alert('Ошибка сохранения: ' + err.message));
   }
 
-  // ========== ПЕРЕКЛЮЧЕНИЕ НЕАКТИВНОСТИ ==========
+  // ========== ПЕРЕКЛЮЧЕНИЕ НЕАКТИВНОСТИ (ПО СОДЕРЖИМОМУ) ==========
+  // Статус "неактивно" применяется ко ВСЕМ записям с таким же оригиналом.
   function toggleInactive(key) {
     const item = allData.find(d => d.key === key);
     if (!item) return;
+
     const newState = !item.inactive;
-    stringsRef.child(key).update({ inactive: newState })
+    const targetNorm = normalizeOriginalForCompare(item.original);
+
+    // Находим все записи с таким же нормализованным оригиналом
+    const matchingKeys = allData
+      .filter(d => normalizeOriginalForCompare(d.original) === targetNorm)
+      .map(d => d.key);
+
+    if (matchingKeys.length === 0) return;
+
+    // Обновляем локальное состояние
+    for (const k of matchingKeys) {
+      const local = allData.find(d => d.key === k);
+      if (local) local.inactive = newState;
+    }
+
+    // Одним запросом обновляем все совпадающие ключи
+    const updates = {};
+    for (const k of matchingKeys) {
+      updates[k + '/inactive'] = newState;
+    }
+
+    stringsRef.update(updates)
       .then(() => {
-        item.inactive = newState;
         render();
+        if (matchingKeys.length > 1) {
+          console.log(`Статус "inactive=${newState}" применён к ${matchingKeys.length} записям с одинаковым содержанием.`);
+        }
       })
       .catch(err => alert('Ошибка обновления статуса: ' + err.message));
   }
@@ -1287,6 +1312,15 @@
 
         const norm = (t) => normalizeOriginalForCompare(t);
 
+        // Карта "нормализованный оригинал → неактивна" из существующих данных.
+        // Используется, чтобы сохранить статус при переносе фразы на другой ID.
+        const inactiveByContent = new Map();
+        for (const item of allData) {
+          if (item.inactive) {
+            inactiveByContent.set(norm(item.original), true);
+          }
+        }
+
         const parsedByTarget = new Map();
         for (const p of parsed) {
           parsedByTarget.set(String(p.number), p);
@@ -1350,6 +1384,13 @@
             nextId = nid + 1;
           }
 
+          // Статус "неактивно" сохраняется по содержимому — если фраза была
+          // неактивна под старым ID, она остаётся неактивной и под новым.
+          const existingInactive = existing
+            ? (existing.inactive || false)
+            : (inactiveByContent.get(c) || false);
+          const inactiveFinal = inactiveByContent.get(c) || existingInactive;
+
           finalMap.set(targetKey, {
             key: targetKey,
             original: p.content,
@@ -1361,7 +1402,7 @@
             confirmed: existing ? (existing.confirmed || false) : false,
             confirmedBy: existing ? (existing.confirmedBy || '') : '',
             confirmedByName: existing ? (existing.confirmedByName || '') : '',
-            inactive: existing ? (existing.inactive || false) : false
+            inactive: inactiveFinal
           });
         }
 
@@ -1449,13 +1490,11 @@
         const user = getCurrentUserInfo();
         const shouldConfirm = confirmImportedTranslations.checked;
 
-        // Карта: ID → {content, comment} из последнего оригинального WTS
         const structureById = new Map();
         for (const s of lastImportStructure) {
           structureById.set(String(s.id), s);
         }
 
-        // Карта: нормализованное содержимое оригинала → ключ в БД
         const dbByContent = new Map();
         for (const item of allData) {
           const c = normalizeOriginalForCompare(item.original);
@@ -1472,7 +1511,6 @@
           const transContent = item.content.trim();
           if (!transContent) continue;
 
-          // 1. Находим оригинальный текст по ID через структуру
           let origContent = null;
           const struct = structureById.get(id);
           if (struct) {
@@ -1486,13 +1524,11 @@
             continue;
           }
 
-          // 2. Пропускаем непереведённые фразы (перевод совпадает с оригиналом)
           if (normalizeOriginalForCompare(transContent) === normalizeOriginalForCompare(origContent)) {
             skippedUntranslated++;
             continue;
           }
 
-          // 3. Ищем запись в БД по содержимому оригинала
           const normOrig = normalizeOriginalForCompare(origContent);
           const dbKey = dbByContent.get(normOrig);
           if (!dbKey) {
@@ -1574,8 +1610,6 @@
   });
 
   // ========== ЭКСПОРТ ==========
-  // Экспорт только тех фраз, которые были в структуре последнего загруженного файла.
-  // Никаких "остатков" из базы не добавляется.
   function generateWTSFromStructure(data, structure) {
     const index = buildContentIndex(data);
     let output = '';
@@ -1584,7 +1618,7 @@
     for (const s of structure) {
       const c = normalizeForMatch(s.content);
       const dbKey = index.get(c);
-      if (!dbKey) continue; // фраза удалена из базы — пропускаем
+      if (!dbKey) continue;
       const entry = data[dbKey];
       const translation = entry.translation || '';
       const textToWrite = translation.trim() !== '' ? translation : s.content;
