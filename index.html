@@ -99,7 +99,6 @@
     .toolbar .import-btn:hover { background: #bf360c; }
     .toolbar .import-translations-wts-btn { background: #4a148c; }
     .toolbar .import-translations-wts-btn:hover { background: #6a1b9a; }
-    /* Кнопки управления БД */
     .toolbar .db-download-btn { background: #00695c; }
     .toolbar .db-download-btn:hover { background: #004d40; }
     .toolbar .db-restore-btn { background: #b71c1c; }
@@ -499,7 +498,6 @@
   const pageInput = document.getElementById('pageInput');
   const gotoPageBtn = document.getElementById('gotoPage');
   const searchInput = document.getElementById('searchInput');
-  // Кнопки управления БД
   const dbDownloadBtn = document.getElementById('dbDownloadBtn');
   const dbRestoreBtn = document.getElementById('dbRestoreBtn');
   const dbRestoreInput = document.getElementById('dbRestoreInput');
@@ -613,7 +611,6 @@
       confirmImportedTranslations.closest('label').style.display = 'none';
     }
 
-    // Кнопки управления БД — только для админов БД
     if (currentUserCanManageDb) {
       adminBadge.style.display = 'inline-block';
       dbDownloadBtn.style.display = 'inline-block';
@@ -685,8 +682,19 @@
     return str.replace(/\s+/g, ' ').trim();
   }
 
+  // ========== НОВЫЙ ШАБЛОН ГРУППИРОВКИ (ТОЛЬКО КИРИЛЛИЦА) ==========
+  // Строит ключ группировки, оставляя только кириллические буквы в нижнем регистре.
+  // Всё остальное (латиница, цифры, пробелы, знаки препинания) игнорируется.
+  // Если в строке нет кириллицы — используем нормализованный оригинал
+  // с префиксом, чтобы такие фразы группировались только между собой.
   function makePattern(str) {
-    return normalizeText(str).replace(/\d+/g, '#');
+    if (!str) return '';
+    const cyrillic = str.toLowerCase().replace(/[^а-яё]/g, '');
+    if (cyrillic.length > 0) {
+      return cyrillic;
+    }
+    // Нет русских букв — уникальный ключ на основе нормализованного текста
+    return '__nocy__' + normalizeText(str).toLowerCase();
   }
 
   function applyTranslationToMember(templateTranslation, original) {
@@ -1700,7 +1708,6 @@
   exportBtn.addEventListener('click', exportWTS);
 
   // ========== СКАЧИВАНИЕ ВСЕЙ БАЗЫ ДАННЫХ ==========
-  // Доступно только пользователям с флагом canManageDb.
   function downloadDatabase() {
     const user = getCurrentUserInfo();
     if (!user.canManageDb) {
@@ -1757,7 +1764,6 @@
   dbDownloadBtn.addEventListener('click', downloadDatabase);
 
   // ========== ВОССТАНОВЛЕНИЕ БАЗЫ ДАННЫХ ИЗ ФАЙЛА ==========
-  // Доступно только пользователям с флагом canManageDb.
   function restoreDatabase(file) {
     const user = getCurrentUserInfo();
     if (!user.canManageDb) {
@@ -1799,32 +1805,27 @@
           ? `\nЭкспортировал: ${meta.exportedBy.displayName}`
           : '';
 
-        // Первое подтверждение
         if (!confirm(
           `ВНИМАНИЕ! Восстановление базы данных ПОЛНОСТЬЮ ЗАМЕНИТ текущее содержимое.\n\n` +
           `В файле: ${stringsCount} фраз.${exportedInfo}${authorInfo}\n\n` +
           `Текущее содержимое будет безвозвратно удалено. Продолжить?`
         )) return;
 
-        // Второе подтверждение — ввод кода
         const code = prompt('Для подтверждения введите слово "ВОССТАНОВИТЬ" (без кавычек):');
         if (code !== 'ВОССТАНОВИТЬ') {
           alert('Операция отменена. Код не совпадает.');
           return;
         }
 
-        // Третье подтверждение
         if (!confirm('Последний шанс! Заменить всю базу данных содержимым файла?')) {
           return;
         }
 
-        // Выполняем восстановление: сначала strings, потом metadata
         stringsRef.set(stringsData)
           .then(() => {
             return metadataRef.set(metadataData);
           })
           .then(() => {
-            // Обновляем локальное состояние метаданных
             importedNumbers = Array.isArray(metadataData.importedNumbers) ? metadataData.importedNumbers : [];
             lastImportStructure = Array.isArray(metadataData.lastImportStructure) ? metadataData.lastImportStructure : [];
             currentPage = 0;
