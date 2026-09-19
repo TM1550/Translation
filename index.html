@@ -103,8 +103,6 @@
     .toolbar .db-download-btn:hover { background: #004d40; }
     .toolbar .db-restore-btn { background: #b71c1c; }
     .toolbar .db-restore-btn:hover { background: #7f0000; }
-    .toolbar .db-repair-btn { background: #455a64; }
-    .toolbar .db-repair-btn:hover { background: #263238; }
     #fileInput, #translationsWtsInput, #dbRestoreInput { display: none; }
     .filter-group {
       display: flex;
@@ -392,7 +390,6 @@
 
     <button class="db-download-btn" id="dbDownloadBtn" style="display:none;">💾 Скачать БД</button>
     <button class="db-restore-btn" id="dbRestoreBtn" style="display:none;">📤 Восстановить БД</button>
-    <button class="db-repair-btn" id="dbRepairBtn" style="display:none;">🔧 Починить БД</button>
     <input type="file" id="dbRestoreInput" accept=".json" style="display:none;">
 
     <div class="filter-group">
@@ -497,7 +494,6 @@
   const searchInput = document.getElementById('searchInput');
   const dbDownloadBtn = document.getElementById('dbDownloadBtn');
   const dbRestoreBtn = document.getElementById('dbRestoreBtn');
-  const dbRepairBtn = document.getElementById('dbRepairBtn');
   const dbRestoreInput = document.getElementById('dbRestoreInput');
 
   const userInfo = document.getElementById('userInfo');
@@ -579,7 +575,6 @@
       confirmImportedTranslations.closest('label').style.display = 'none';
       dbDownloadBtn.style.display = 'none';
       dbRestoreBtn.style.display = 'none';
-      dbRepairBtn.style.display = 'none';
       render();
     }
   }
@@ -611,12 +606,10 @@
       adminBadge.style.display = 'inline-block';
       dbDownloadBtn.style.display = 'inline-block';
       dbRestoreBtn.style.display = 'inline-block';
-      dbRepairBtn.style.display = 'inline-block';
     } else {
       adminBadge.style.display = 'none';
       dbDownloadBtn.style.display = 'none';
       dbRestoreBtn.style.display = 'none';
-      dbRepairBtn.style.display = 'none';
     }
 
     render();
@@ -678,96 +671,6 @@
 
   function normalizeText(str) {
     return str.replace(/\s+/g, ' ').trim();
-  }
-
-  // =====================================================================
-  // ЗАЩИТА И ПОЧИНКА ЗАПИСЕЙ С JSON-МУСОРОМ
-  // =====================================================================
-
-  function looksLikeCorruptedJson(text) {
-    if (!text || typeof text !== 'string') return false;
-    return /"(original|translation|translationAuthor|translationAuthorName|wtsComment|confirmedBy|confirmedByName|userComments|inactive|key)"\s*:/.test(text);
-  }
-
-  function extractJsonFieldValue(text, fieldName) {
-    const marker = '"' + fieldName + '":"';
-    const idx = text.indexOf(marker);
-    if (idx === -1) return null;
-
-    let i = idx + marker.length;
-    let result = '';
-
-    while (i < text.length) {
-      const ch = text[i];
-
-      if (ch === '\\' && i + 1 < text.length) {
-        const next = text[i + 1];
-        switch (next) {
-          case 'n': result += '\n'; break;
-          case 'r': result += '\r'; break;
-          case 't': result += '\t'; break;
-          case '"': result += '"'; break;
-          case '\\': result += '\\'; break;
-          case '/': result += '/'; break;
-          case 'b': result += '\b'; break;
-          case 'f': result += '\f'; break;
-          case 'u': {
-            const hex = text.substr(i + 2, 4);
-            const code = parseInt(hex, 16);
-            if (!isNaN(code) && hex.length === 4 && /^[0-9a-fA-F]{4}$/.test(hex)) {
-              result += String.fromCharCode(code);
-              i += 6;
-              continue;
-            }
-            result += 'u';
-            break;
-          }
-          default: result += next;
-        }
-        i += 2;
-        continue;
-      }
-
-      if (ch === '"') break;
-
-      result += ch;
-      i++;
-    }
-
-    return result;
-  }
-
-  // Полностью переписана: режет приклеенный JSON-мусор, не трогая нормальный текст с тегами.
-  function repairCorruptedField(text, fieldName) {
-    if (!text || typeof text !== 'string') return text;
-    if (!looksLikeCorruptedJson(text)) return text;
-
-    const trimmed = text.trimStart();
-
-    // Случай 1: значение целиком является JSON-дампом записи (начинается с { или [)
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-      const extracted = extractJsonFieldValue(text, fieldName);
-      if (extracted !== null && extracted.trim() !== '') {
-        return extracted;
-      }
-      if (fieldName !== 'original') {
-        const fallback = extractJsonFieldValue(text, 'original');
-        if (fallback !== null && fallback.trim() !== '') {
-          return fallback;
-        }
-      }
-      return text;
-    }
-
-    // Случай 2: нормальный текст, в который в конце приклеен мусор из JSON.
-    // Ищем первое появление закрывающей кавычки + запятой + имени JSON-поля.
-    const garbageRe = /"\s*,\s*"(?:original|translation|translationAuthor|translationAuthorName|wtsComment|userComments|confirmed|confirmedBy|confirmedByName|inactive|key)"\s*:|"\]\s*,\s*\{/;
-    const match = garbageRe.exec(text);
-    if (match) {
-      return text.substring(0, match.index).replace(/\s+$/, '');
-    }
-
-    return text;
   }
 
   // ========== ШАБЛОН ГРУППИРОВКИ ==========
@@ -948,14 +851,6 @@
   }
 
   function saveTranslation(key, newTranslation) {
-    if (looksLikeCorruptedJson(newTranslation)) {
-      alert(
-        'Похоже, в поле перевода попал JSON-мусор. Это не будет сохранено.\n' +
-        'Проверьте, что вы вставляете именно перевод, а не данные из другого источника.'
-      );
-      return;
-    }
-
     const item = allData.find(d => d.key === key);
     if (!item) return;
     const user = getCurrentUserInfo();
@@ -1148,8 +1043,6 @@
       const user = getCurrentUserInfo();
       for (const item of pageItems) {
         const key = item.key;
-        // НЕ чистим WTS-теги — показываем как есть.
-        // repairCorruptedField уже отработал в слушателе базы и удалил JSON-мусор.
         const original = item.original || '';
         const translation = item.translation || '';
         const wtsComment = item.wtsComment || '';
@@ -1859,57 +1752,6 @@
     this.value = '';
   });
 
-  function repairDatabase() {
-    const user = getCurrentUserInfo();
-    if (!user.canManageDb) {
-      alert('У вас нет прав на починку базы данных.');
-      return;
-    }
-    if (!confirm('Пройтись по всем записям и попытаться починить повреждённые поля original и translation?')) return;
-    stringsRef.once('value')
-      .then((snap) => {
-        const data = snap.val() || {};
-        const updates = {};
-        let fixedOriginalCount = 0;
-        let fixedTranslationCount = 0;
-        const details = [];
-        for (const [key, entry] of Object.entries(data)) {
-          const rawOriginal = entry.original || '';
-          const rawTranslation = entry.translation || '';
-          const fixedOriginal = repairCorruptedField(rawOriginal, 'original');
-          const fixedTranslation = repairCorruptedField(rawTranslation, 'translation');
-          if (fixedOriginal !== rawOriginal) {
-            updates[key + '/original'] = fixedOriginal;
-            fixedOriginalCount++;
-            details.push('#' + key + ' → original');
-          }
-          if (fixedTranslation !== rawTranslation) {
-            updates[key + '/translation'] = fixedTranslation;
-            fixedTranslationCount++;
-            details.push('#' + key + ' → translation');
-          }
-        }
-        if (Object.keys(updates).length === 0) {
-          alert('Повреждённых записей не найдено.');
-          return;
-        }
-        stringsRef.update(updates)
-          .then(() => {
-            let msg = 'Починка завершена.\n';
-            msg += `Исправлено original: ${fixedOriginalCount}.\n`;
-            msg += `Исправлено translation: ${fixedTranslationCount}.\n\n`;
-            msg += 'Затронутые записи:\n' + details.slice(0, 30).join('\n');
-            if (details.length > 30) msg += `\n... и ещё ${details.length - 30}`;
-            alert(msg);
-            render();
-          })
-          .catch(err => alert('Ошибка при починке БД: ' + err.message));
-      })
-      .catch(err => alert('Ошибка чтения БД: ' + err.message));
-  }
-
-  dbRepairBtn.addEventListener('click', repairDatabase);
-
   function goToPage(page) {
     const displayItems = getDisplayItems();
     const totalPages = itemsPerPage === 0 ? 1 : Math.ceil(displayItems.length / itemsPerPage);
@@ -1975,40 +1817,21 @@
     }
   });
 
-  // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В БАЗЕ (с авто-починкой JSON-мусора) ==========
+  // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В БАЗЕ ==========
   stringsRef.on('value', (snapshot) => {
     const data = snapshot.val();
     if (!data) { allData = []; render(); return; }
     const entries = Object.entries(data).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
+    
     allData = entries.map(([key, entry]) => {
       let wtsComment = entry.wtsComment || '';
       let userComments = entry.userComments || [];
       if (entry.comment && !wtsComment) wtsComment = entry.comment;
 
-      const rawOriginal = entry.original || '';
-      const rawTranslation = entry.translation || '';
-
-      // Починка JSON-мусора (без удаления WTS-тегов)
-      const fixedOriginal = repairCorruptedField(rawOriginal, 'original');
-      const fixedTranslation = repairCorruptedField(rawTranslation, 'translation');
-
-      const patch = {};
-      if (fixedOriginal !== rawOriginal) {
-        patch.original = fixedOriginal;
-        console.warn('Повреждённый original в #' + key + ' — исправляю автоматически.');
-      }
-      if (fixedTranslation !== rawTranslation) {
-        patch.translation = fixedTranslation;
-        console.warn('Повреждённый translation в #' + key + ' — исправляю автоматически.');
-      }
-      if (Object.keys(patch).length > 0) {
-        stringsRef.child(key).update(patch).catch(err => console.warn('Не удалось починить #' + key + ':', err));
-      }
-
       return {
         key,
-        original: fixedOriginal,
-        translation: fixedTranslation,
+        original: entry.original || '',
+        translation: entry.translation || '',
         translationAuthor: entry.translationAuthor || '',
         translationAuthorName: entry.translationAuthorName || '',
         wtsComment: wtsComment,
