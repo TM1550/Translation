@@ -682,30 +682,88 @@
     return str.replace(/\s+/g, ' ').trim();
   }
 
-  // ========== НОВЫЙ ШАБЛОН ГРУППИРОВКИ (ТОЛЬКО КИРИЛЛИЦА) ==========
-  // Строит ключ группировки, оставляя только кириллические буквы в нижнем регистре.
-  // Всё остальное (латиница, цифры, пробелы, знаки препинания) игнорируется.
-  // Если в строке нет кириллицы — используем нормализованный оригинал
-  // с префиксом, чтобы такие фразы группировались только между собой.
+  // ========== ШАБЛОН ГРУППИРОВКИ (ТОЛЬКО КИРИЛЛИЦА) ==========
   function makePattern(str) {
     if (!str) return '';
     const cyrillic = str.toLowerCase().replace(/[^а-яё]/g, '');
     if (cyrillic.length > 0) {
       return cyrillic;
     }
-    // Нет русских букв — уникальный ключ на основе нормализованного текста
     return '__nocy__' + normalizeText(str).toLowerCase();
   }
 
-  function applyTranslationToMember(templateTranslation, original) {
-    const numbers = extractNumbers(original);
+  // ========== ПОДСТАНОВКА ПЕРЕВОДА МЕЖДУ УЧАСТНИКАМИ ГРУППЫ ==========
+
+  // Экранирование спецсимволов для RegExp
+  function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  // Подставляет в перевод отличия идентификаторов из блоков <...>
+  // между sourceOriginal и targetOriginal. Например:
+  //   source: <A0KB,DataE1,.>   target: <A0K9,DataE1,.>
+  //   → в переводе A0KB заменится на A0K9
+  function substituteIdentifiers(translation, sourceOriginal, targetOriginal) {
+    const blockRe = /<[^>]*>/g;
+    const srcBlocks = sourceOriginal.match(blockRe) || [];
+    const tgtBlocks = targetOriginal.match(blockRe) || [];
+
+    // Если структур разное количество — ничего не делаем (безопасный fallback)
+    if (srcBlocks.length === 0 || srcBlocks.length !== tgtBlocks.length) {
+      return translation;
+    }
+
+    const substitutions = new Map();
+
+    for (let i = 0; i < srcBlocks.length; i++) {
+      const s = srcBlocks[i];
+      const t = tgtBlocks[i];
+      if (s === t) continue;
+
+      // Разбиваем содержимое <...> по запятым
+      const sParts = s.slice(1, -1).split(',');
+      const tParts = t.slice(1, -1).split(',');
+      if (sParts.length !== tParts.length) continue;
+
+      for (let j = 0; j < sParts.length; j++) {
+        const a = sParts[j].trim();
+        const b = tParts[j].trim();
+        if (a === b) continue;
+        // Подставляем только «словные» идентификаторы (буквы/цифры/подчёркивания)
+        if (/^[A-Za-z0-9_]+$/.test(a) && /^[A-Za-z0-9_]+$/.test(b)) {
+          substitutions.set(a, b);
+        }
+      }
+    }
+
+    if (substitutions.size === 0) return translation;
+
+    let result = translation;
+    for (const [from, to] of substitutions) {
+      const re = new RegExp('\\b' + escapeRegExp(from) + '\\b', 'g');
+      result = result.replace(re, to);
+    }
+    return result;
+  }
+
+  // Применяет перевод одного участника группы к другому.
+  // 1) Подставляет идентификаторы из <...> по разнице sourceOriginal → targetOriginal
+  // 2) Затем выполняет прежнюю подстановку чисел из targetOriginal
+  function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
+    // Шаг 1. Идентификаторы (<...>)
+    let result = substituteIdentifiers(templateTranslation, sourceOriginal, targetOriginal);
+
+    // Шаг 2. Числа (прежнее поведение)
+    const numbers = extractNumbers(targetOriginal);
     let index = 0;
-    return templateTranslation.replace(/\d+/g, function(match) {
+    result = result.replace(/\d+/g, function(match) {
       if (index < numbers.length) {
         return numbers[index++];
       }
       return match;
     });
+
+    return result;
   }
 
   function cleanWtsText(text) {
@@ -853,7 +911,9 @@
           if (member.key === key) {
             memberTranslation = newTranslation;
           } else {
-            memberTranslation = applyTranslationToMember(newTranslation, member.original);
+            // Передаём оригинал текущей фразы (источник) и оригинал участника (цель),
+            // чтобы функция могла подставить идентификаторы из <...>.
+            memberTranslation = applyTranslationToMember(newTranslation, item.original, member.original);
           }
           const localItem = allData.find(d => d.key === member.key);
           if (localItem) {
