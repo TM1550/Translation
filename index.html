@@ -63,6 +63,14 @@
       font-weight: 600;
       color: #333;
     }
+    .auth-bar .admin-badge {
+      background: #d32f2f;
+      color: white;
+      padding: 2px 10px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 600;
+    }
     .auth-bar .set-name-btn { background: #2e7d32; }
     .auth-bar .set-name-btn:hover { background: #1b5e20; }
     .toolbar {
@@ -91,7 +99,12 @@
     .toolbar .import-btn:hover { background: #bf360c; }
     .toolbar .import-translations-wts-btn { background: #4a148c; }
     .toolbar .import-translations-wts-btn:hover { background: #6a1b9a; }
-    #fileInput, #translationsWtsInput { display: none; }
+    /* Кнопки управления БД */
+    .toolbar .db-download-btn { background: #00695c; }
+    .toolbar .db-download-btn:hover { background: #004d40; }
+    .toolbar .db-restore-btn { background: #b71c1c; }
+    .toolbar .db-restore-btn:hover { background: #7f0000; }
+    #fileInput, #translationsWtsInput, #dbRestoreInput { display: none; }
     .filter-group {
       display: flex;
       align-items: center;
@@ -360,6 +373,7 @@
   <div class="auth-bar" id="authBar">
     <span class="user-info" id="userInfo">Не авторизован</span>
     <span class="role-badge" id="roleBadge" style="display:none;"></span>
+    <span class="admin-badge" id="adminBadge" style="display:none;">🛡️ Админ БД</span>
     <button id="loginGoogleBtn">Войти через Google</button>
     <button id="setNameBtn" class="set-name-btn" style="display:none;">Задать имя</button>
     <button id="logoutBtn">Выйти</button>
@@ -375,6 +389,11 @@
       <input type="checkbox" id="confirmImportedTranslations"> Подтвердить импорт
     </label>
     <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts</button>
+
+    <!-- Кнопки управления базой данных (только для админов БД) -->
+    <button class="db-download-btn" id="dbDownloadBtn" style="display:none;">💾 Скачать БД</button>
+    <button class="db-restore-btn" id="dbRestoreBtn" style="display:none;">📤 Восстановить БД</button>
+    <input type="file" id="dbRestoreInput" accept=".json" style="display:none;">
 
     <div class="filter-group">
       <label><input type="checkbox" id="filterOnlyRussian"> Только с русскими буквами</label>
@@ -480,10 +499,15 @@
   const pageInput = document.getElementById('pageInput');
   const gotoPageBtn = document.getElementById('gotoPage');
   const searchInput = document.getElementById('searchInput');
+  // Кнопки управления БД
+  const dbDownloadBtn = document.getElementById('dbDownloadBtn');
+  const dbRestoreBtn = document.getElementById('dbRestoreBtn');
+  const dbRestoreInput = document.getElementById('dbRestoreInput');
 
   // Авторизация элементы
   const userInfo = document.getElementById('userInfo');
   const roleBadge = document.getElementById('roleBadge');
+  const adminBadge = document.getElementById('adminBadge');
   const loginGoogleBtn = document.getElementById('loginGoogleBtn');
   const logoutBtn = document.getElementById('logoutBtn');
   const setNameBtn = document.getElementById('setNameBtn');
@@ -507,8 +531,9 @@
   let currentUser = null;
   let currentDisplayName = '';
   let currentUserRole = 'translator';
+  let currentUserCanManageDb = false;
   let importedNumbers = [];
-  let lastImportStructure = []; // структура последнего импортированного файла: [{id, content, comment}]
+  let lastImportStructure = [];
 
   // ========== АВТОРИЗАЦИЯ ==========
 
@@ -533,22 +558,25 @@
           const data = snap.val() || {};
           let name = data.displayName;
           let role = data.role || 'translator';
+          let canManageDb = data.canManageDb === true;
           if (!name) {
             name = user.displayName || 'Аноним';
             usersRef.child(uid).update({ displayName: name }).catch(err => console.warn(err));
           }
-          applyUserData(name, role);
+          applyUserData(name, role, canManageDb);
         })
         .catch(() => {
           const name = user.displayName || 'Аноним';
-          applyUserData(name, 'translator');
+          applyUserData(name, 'translator', false);
         });
     } else {
       currentUser = null;
       currentDisplayName = '';
       currentUserRole = 'translator';
+      currentUserCanManageDb = false;
       userInfo.textContent = 'Не авторизован';
       roleBadge.style.display = 'none';
+      adminBadge.style.display = 'none';
       setNameBtn.style.display = 'none';
       loginGoogleBtn.style.display = 'inline-block';
       logoutBtn.style.display = 'none';
@@ -556,19 +584,23 @@
       importTranslationsWtsBtn.style.display = 'none';
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
+      dbDownloadBtn.style.display = 'none';
+      dbRestoreBtn.style.display = 'none';
       render();
     }
   }
 
-  function applyUserData(name, role) {
+  function applyUserData(name, role, canManageDb) {
     currentDisplayName = name;
     currentUserRole = role;
+    currentUserCanManageDb = canManageDb === true;
     userInfo.textContent = `👤 ${name} (${currentUser.email || 'аноним'})`;
     roleBadge.textContent = role === 'editor' ? 'Редактор' : 'Переводчик';
     roleBadge.style.display = 'inline-block';
     setNameBtn.style.display = 'inline-block';
     loginGoogleBtn.style.display = 'none';
     logoutBtn.style.display = 'inline-block';
+
     if (role === 'editor') {
       importBtn.style.display = 'inline-block';
       importTranslationsWtsBtn.style.display = 'inline-block';
@@ -580,6 +612,18 @@
       exportBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
     }
+
+    // Кнопки управления БД — только для админов БД
+    if (currentUserCanManageDb) {
+      adminBadge.style.display = 'inline-block';
+      dbDownloadBtn.style.display = 'inline-block';
+      dbRestoreBtn.style.display = 'inline-block';
+    } else {
+      adminBadge.style.display = 'none';
+      dbDownloadBtn.style.display = 'none';
+      dbRestoreBtn.style.display = 'none';
+    }
+
     render();
   }
 
@@ -614,9 +658,9 @@
 
   function getCurrentUserInfo() {
     if (currentUser) {
-      return { uid: currentUser.uid, displayName: currentDisplayName, role: currentUserRole };
+      return { uid: currentUser.uid, displayName: currentDisplayName, role: currentUserRole, canManageDb: currentUserCanManageDb };
     }
-    return { uid: null, displayName: 'Аноним', role: 'translator' };
+    return { uid: null, displayName: 'Аноним', role: 'translator', canManageDb: false };
   }
 
   function hasRussian(text) { return /[а-яё]/i.test(text); }
@@ -827,7 +871,6 @@
   }
 
   // ========== ПЕРЕКЛЮЧЕНИЕ НЕАКТИВНОСТИ (ПО СОДЕРЖИМОМУ) ==========
-  // Статус "неактивно" применяется ко ВСЕМ записям с таким же оригиналом.
   function toggleInactive(key) {
     const item = allData.find(d => d.key === key);
     if (!item) return;
@@ -835,20 +878,17 @@
     const newState = !item.inactive;
     const targetNorm = normalizeOriginalForCompare(item.original);
 
-    // Находим все записи с таким же нормализованным оригиналом
     const matchingKeys = allData
       .filter(d => normalizeOriginalForCompare(d.original) === targetNorm)
       .map(d => d.key);
 
     if (matchingKeys.length === 0) return;
 
-    // Обновляем локальное состояние
     for (const k of matchingKeys) {
       const local = allData.find(d => d.key === k);
       if (local) local.inactive = newState;
     }
 
-    // Одним запросом обновляем все совпадающие ключи
     const updates = {};
     for (const k of matchingKeys) {
       updates[k + '/inactive'] = newState;
@@ -857,9 +897,6 @@
     stringsRef.update(updates)
       .then(() => {
         render();
-        if (matchingKeys.length > 1) {
-          console.log(`Статус "inactive=${newState}" применён к ${matchingKeys.length} записям с одинаковым содержанием.`);
-        }
       })
       .catch(err => alert('Ошибка обновления статуса: ' + err.message));
   }
@@ -1312,8 +1349,6 @@
 
         const norm = (t) => normalizeOriginalForCompare(t);
 
-        // Карта "нормализованный оригинал → неактивна" из существующих данных.
-        // Используется, чтобы сохранить статус при переносе фразы на другой ID.
         const inactiveByContent = new Map();
         for (const item of allData) {
           if (item.inactive) {
@@ -1384,8 +1419,6 @@
             nextId = nid + 1;
           }
 
-          // Статус "неактивно" сохраняется по содержимому — если фраза была
-          // неактивна под старым ID, она остаётся неактивной и под новым.
           const existingInactive = existing
             ? (existing.inactive || false)
             : (inactiveByContent.get(c) || false);
@@ -1665,6 +1698,156 @@
   }
 
   exportBtn.addEventListener('click', exportWTS);
+
+  // ========== СКАЧИВАНИЕ ВСЕЙ БАЗЫ ДАННЫХ ==========
+  // Доступно только пользователям с флагом canManageDb.
+  function downloadDatabase() {
+    const user = getCurrentUserInfo();
+    if (!user.canManageDb) {
+      alert('У вас нет прав на скачивание базы данных.');
+      return;
+    }
+
+    Promise.all([
+      stringsRef.once('value'),
+      metadataRef.once('value')
+    ])
+      .then(([stringsSnap, metadataSnap]) => {
+        const stringsData = stringsSnap.val() || {};
+        const metadataData = metadataSnap.val() || {};
+
+        const backup = {
+          _meta: {
+            exportedAt: new Date().toISOString(),
+            exportedBy: {
+              uid: user.uid,
+              displayName: user.displayName
+            },
+            version: 1,
+            stringsCount: Object.keys(stringsData).length
+          },
+          strings: stringsData,
+          metadata: metadataData
+        };
+
+        const json = JSON.stringify(backup, null, 2);
+        const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+
+        const now = new Date();
+        const ts = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}`;
+        const filename = `kotmysh_db_backup_${ts}.json`;
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        alert(`База данных выгружена.\nФраз: ${Object.keys(stringsData).length}\nФайл: ${filename}`);
+      })
+      .catch(err => {
+        console.error('Ошибка скачивания БД:', err);
+        alert('Ошибка скачивания базы данных: ' + err.message);
+      });
+  }
+
+  dbDownloadBtn.addEventListener('click', downloadDatabase);
+
+  // ========== ВОССТАНОВЛЕНИЕ БАЗЫ ДАННЫХ ИЗ ФАЙЛА ==========
+  // Доступно только пользователям с флагом canManageDb.
+  function restoreDatabase(file) {
+    const user = getCurrentUserInfo();
+    if (!user.canManageDb) {
+      alert('У вас нет прав на восстановление базы данных.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        const text = e.target.result;
+        let backup;
+        try {
+          backup = JSON.parse(text);
+        } catch (parseErr) {
+          alert('Файл не является корректным JSON.');
+          return;
+        }
+
+        if (!backup || typeof backup !== 'object') {
+          alert('Неверный формат файла бэкапа.');
+          return;
+        }
+
+        const stringsData = backup.strings || {};
+        const metadataData = backup.metadata || {};
+        const stringsCount = Object.keys(stringsData).length;
+
+        if (stringsCount === 0 && Object.keys(metadataData).length === 0) {
+          alert('Файл не содержит данных для восстановления.');
+          return;
+        }
+
+        const meta = backup._meta || {};
+        const exportedInfo = meta.exportedAt
+          ? `\nДата экспорта: ${new Date(meta.exportedAt).toLocaleString('ru-RU')}`
+          : '';
+        const authorInfo = meta.exportedBy && meta.exportedBy.displayName
+          ? `\nЭкспортировал: ${meta.exportedBy.displayName}`
+          : '';
+
+        // Первое подтверждение
+        if (!confirm(
+          `ВНИМАНИЕ! Восстановление базы данных ПОЛНОСТЬЮ ЗАМЕНИТ текущее содержимое.\n\n` +
+          `В файле: ${stringsCount} фраз.${exportedInfo}${authorInfo}\n\n` +
+          `Текущее содержимое будет безвозвратно удалено. Продолжить?`
+        )) return;
+
+        // Второе подтверждение — ввод кода
+        const code = prompt('Для подтверждения введите слово "ВОССТАНОВИТЬ" (без кавычек):');
+        if (code !== 'ВОССТАНОВИТЬ') {
+          alert('Операция отменена. Код не совпадает.');
+          return;
+        }
+
+        // Третье подтверждение
+        if (!confirm('Последний шанс! Заменить всю базу данных содержимым файла?')) {
+          return;
+        }
+
+        // Выполняем восстановление: сначала strings, потом metadata
+        stringsRef.set(stringsData)
+          .then(() => {
+            return metadataRef.set(metadataData);
+          })
+          .then(() => {
+            // Обновляем локальное состояние метаданных
+            importedNumbers = Array.isArray(metadataData.importedNumbers) ? metadataData.importedNumbers : [];
+            lastImportStructure = Array.isArray(metadataData.lastImportStructure) ? metadataData.lastImportStructure : [];
+            currentPage = 0;
+            alert(`База данных успешно восстановлена.\nВосстановлено фраз: ${stringsCount}`);
+            render();
+          })
+          .catch(err => {
+            console.error('Ошибка восстановления БД:', err);
+            alert('Ошибка при восстановлении базы данных: ' + err.message);
+          });
+      } catch (err) {
+        alert('Ошибка при обработке файла: ' + err.message);
+      }
+    };
+    reader.onerror = () => alert('Ошибка чтения файла');
+    reader.readAsText(file, 'UTF-8');
+  }
+
+  dbRestoreBtn.addEventListener('click', () => dbRestoreInput.click());
+  dbRestoreInput.addEventListener('change', function(e) {
+    if (this.files && this.files[0]) restoreDatabase(this.files[0]);
+    this.value = '';
+  });
 
   // ========== УПРАВЛЕНИЕ ПАГИНАЦИЕЙ ==========
   function goToPage(page) {
