@@ -370,7 +370,6 @@
 <div class="app">
   <h1>Перевод карты Котомышь</h1>
 
-  <!-- Панель авторизации -->
   <div class="auth-bar" id="authBar">
     <span class="user-info" id="userInfo">Не авторизован</span>
     <span class="role-badge" id="roleBadge" style="display:none;"></span>
@@ -391,7 +390,6 @@
     </label>
     <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts</button>
 
-    <!-- Кнопки управления базой данных (только для админов БД) -->
     <button class="db-download-btn" id="dbDownloadBtn" style="display:none;">💾 Скачать БД</button>
     <button class="db-restore-btn" id="dbRestoreBtn" style="display:none;">📤 Восстановить БД</button>
     <button class="db-repair-btn" id="dbRepairBtn" style="display:none;">🔧 Починить БД</button>
@@ -432,7 +430,6 @@
     <div class="loader">Загрузка словаря...</div>
   </div>
 
-  <!-- Модальные окна -->
   <div class="modal-overlay" id="commentsModal">
     <div class="modal-box">
       <span class="close-btn" id="modalCloseBtn">&times;</span>
@@ -456,7 +453,6 @@
 </div>
 
 <script>
-  // ============ КОНФИГУРАЦИЯ FIREBASE ============
   const firebaseConfig = {
     apiKey: "AIzaSyATbe93bnOiAQmdTUX1dh22UXwtA_dbMWI",
     authDomain: "translatorapp-6fd48.firebaseapp.com",
@@ -466,7 +462,6 @@
     messagingSenderId: "428558181807",
     appId: "1:428558181807:web:b891cd4d29c8b985eebb5a"
   };
-  // =================================================
 
   firebase.initializeApp(firebaseConfig);
   const db = firebase.database();
@@ -475,7 +470,6 @@
   const metadataRef = db.ref('metadata');
   const usersRef = db.ref('users');
 
-  // DOM элементы
   const container = document.getElementById('dictionaryContainer');
   const statsSpan = document.getElementById('stats');
   const countStatus = document.getElementById('countStatus');
@@ -506,7 +500,6 @@
   const dbRepairBtn = document.getElementById('dbRepairBtn');
   const dbRestoreInput = document.getElementById('dbRestoreInput');
 
-  // Авторизация элементы
   const userInfo = document.getElementById('userInfo');
   const roleBadge = document.getElementById('roleBadge');
   const adminBadge = document.getElementById('adminBadge');
@@ -514,7 +507,6 @@
   const logoutBtn = document.getElementById('logoutBtn');
   const setNameBtn = document.getElementById('setNameBtn');
 
-  // Модальные окна
   const commentsModal = document.getElementById('commentsModal');
   const modalCloseBtn = document.getElementById('modalCloseBtn');
   const modalTitle = document.getElementById('modalTitle');
@@ -526,7 +518,6 @@
   const similarModalTitle = document.getElementById('similarModalTitle');
   const similarModalList = document.getElementById('similarModalList');
 
-  // Состояние
   let allData = [];
   let currentPage = 0;
   let itemsPerPage = 25;
@@ -693,16 +684,11 @@
   // ЗАЩИТА И ПОЧИНКА ЗАПИСЕЙ С JSON-МУСОРОМ
   // =====================================================================
 
-  // Признаки того, что текст — JSON-дамп целой записи (или его обрубок)
   function looksLikeCorruptedJson(text) {
     if (!text || typeof text !== 'string') return false;
     return /"(original|translation|translationAuthor|translationAuthorName|wtsComment|confirmedBy|confirmedByName|userComments|inactive|key)"\s*:/.test(text);
   }
 
-  // Извлекает значение указанного поля из JSON-подобной строки.
-  // Работает даже если строка обрезана (нет закрывающей кавычки):
-  // в этом случае читает до конца строки, до закрывающей кавычки,
-  // либо до маркера следующего поля (","<field>":).
   function extractJsonFieldValue(text, fieldName) {
     const marker = '"' + fieldName + '":"';
     const idx = text.indexOf(marker);
@@ -714,7 +700,6 @@
     while (i < text.length) {
       const ch = text[i];
 
-      // Escape-последовательность
       if (ch === '\\' && i + 1 < text.length) {
         const next = text[i + 1];
         switch (next) {
@@ -743,7 +728,6 @@
         continue;
       }
 
-      // Конец строкового значения
       if (ch === '"') break;
 
       result += ch;
@@ -753,30 +737,40 @@
     return result;
   }
 
-  // Починить конкретное поле: если оно содержит JSON-дамп —
-  // извлекаем из него значение одноимённого поля.
+  // Полностью переписана: режет приклеенный JSON-мусор, не трогая нормальный текст с тегами.
   function repairCorruptedField(text, fieldName) {
     if (!text || typeof text !== 'string') return text;
     if (!looksLikeCorruptedJson(text)) return text;
 
-    const extracted = extractJsonFieldValue(text, fieldName);
-    if (extracted !== null && extracted.trim() !== '') {
-      return extracted;
+    const trimmed = text.trimStart();
+
+    // Случай 1: значение целиком является JSON-дампом записи (начинается с { или [)
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      const extracted = extractJsonFieldValue(text, fieldName);
+      if (extracted !== null && extracted.trim() !== '') {
+        return extracted;
+      }
+      if (fieldName !== 'original') {
+        const fallback = extractJsonFieldValue(text, 'original');
+        if (fallback !== null && fallback.trim() !== '') {
+          return fallback;
+        }
+      }
+      return text;
     }
 
-    // Если одноимённое поле не нашлось — попробуем взять "original"
-    // как наиболее вероятное валидное содержимое.
-    if (fieldName !== 'original') {
-      const fallback = extractJsonFieldValue(text, 'original');
-      if (fallback !== null && fallback.trim() !== '') {
-        return fallback;
-      }
+    // Случай 2: нормальный текст, в который в конце приклеен мусор из JSON.
+    // Ищем первое появление закрывающей кавычки + запятой + имени JSON-поля.
+    const garbageRe = /"\s*,\s*"(?:original|translation|translationAuthor|translationAuthorName|wtsComment|userComments|confirmed|confirmedBy|confirmedByName|inactive|key)"\s*:|"\]\s*,\s*\{/;
+    const match = garbageRe.exec(text);
+    if (match) {
+      return text.substring(0, match.index).replace(/\s+$/, '');
     }
 
     return text;
   }
 
-  // ========== ШАБЛОН ГРУППИРОВКИ (ТОЛЬКО КИРИЛЛИЦА) ==========
+  // ========== ШАБЛОН ГРУППИРОВКИ ==========
   function makePattern(str) {
     if (!str) return '';
     const cyrillic = str.toLowerCase().replace(/[^а-яё]/g, '');
@@ -785,8 +779,6 @@
     }
     return '__nocy__' + normalizeText(str).toLowerCase();
   }
-
-  // ========== ПОДСТАНОВКА ПЕРЕВОДА МЕЖДУ УЧАСТНИКАМИ ГРУППЫ ==========
 
   function escapeRegExp(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -847,6 +839,7 @@
     return result;
   }
 
+  // Убирает только WTS-теги — используется для сравнения и группировки, не для отображения
   function cleanWtsText(text) {
     if (!text) return '';
     let cleaned = text.replace(/\|c[0-9a-fA-F]{6,8}/g, '');
@@ -872,7 +865,6 @@
     return index;
   }
 
-  // ========== ПОСТРОЕНИЕ ГРУПП ==========
   function buildGroups(dataArray) {
     const map = new Map();
     for (const item of dataArray) {
@@ -889,7 +881,6 @@
     return groups;
   }
 
-  // ========== ЛОГИКА ФИЛЬТРАЦИИ ==========
   function getFilteredData() {
     let filtered = allData;
 
@@ -931,7 +922,6 @@
     return filtered;
   }
 
-  // ========== ПОЛУЧЕНИЕ ЭЛЕМЕНТОВ ДЛЯ ОТОБРАЖЕНИЯ ==========
   function getDisplayItems() {
     const filtered = getFilteredData();
     if (!groupMode.checked) {
@@ -952,15 +942,12 @@
     return items.slice(start, start + itemsPerPage);
   }
 
-  // ========== АВТО-ВЫСОТА TEXTAREA ==========
   function autoResize(textarea) {
     textarea.style.height = 'auto';
     textarea.style.height = textarea.scrollHeight + 'px';
   }
 
-  // ========== ОСНОВНАЯ ЛОГИКА СОХРАНЕНИЯ ПЕРЕВОДА ==========
   function saveTranslation(key, newTranslation) {
-    // ЗАЩИТА ОТ ЗАПИСИ JSON-МУСОРА
     if (looksLikeCorruptedJson(newTranslation)) {
       alert(
         'Похоже, в поле перевода попал JSON-мусор. Это не будет сохранено.\n' +
@@ -1026,7 +1013,6 @@
     stringsRef.child(key).update(updateData).catch(err => alert('Ошибка сохранения: ' + err.message));
   }
 
-  // ========== ПЕРЕКЛЮЧЕНИЕ НЕАКТИВНОСТИ (ПО СОДЕРЖИМОМУ) ==========
   function toggleInactive(key) {
     const item = allData.find(d => d.key === key);
     if (!item) return;
@@ -1051,13 +1037,10 @@
     }
 
     stringsRef.update(updates)
-      .then(() => {
-        render();
-      })
+      .then(() => { render(); })
       .catch(err => alert('Ошибка обновления статуса: ' + err.message));
   }
 
-  // ========== ПОИСК ПОХОЖИХ ПОДТВЕРЖДЁННЫХ ПЕРЕВОДОВ ==========
   function findSimilarConfirmedTranslations(original, excludeKey, maxResults = 5) {
     const words = text => text.toLowerCase().replace(/[^a-zа-яё\s]/g, '').split(/\s+/).filter(w => w.length > 2);
     const currentWords = words(original);
@@ -1070,7 +1053,6 @@
       if (entry.key === excludeKey) continue;
       if (!entry.confirmed) continue;
       if (!entry.translation || entry.translation.trim() === '') continue;
-
       if (normalizeOriginalForCompare(entry.original) === currentNormalized) continue;
 
       const entryWords = words(entry.original);
@@ -1166,11 +1148,12 @@
       const user = getCurrentUserInfo();
       for (const item of pageItems) {
         const key = item.key;
+        // НЕ чистим WTS-теги — показываем как есть.
+        // repairCorruptedField уже отработал в слушателе базы и удалил JSON-мусор.
         const original = item.original || '';
         const translation = item.translation || '';
         const wtsComment = item.wtsComment || '';
         const userComments = item.userComments || [];
-        const translationAuthor = item.translationAuthor || '';
         const translationAuthorName = item.translationAuthorName || '';
         const confirmed = item.confirmed || false;
         const confirmedByName = item.confirmedByName || '';
@@ -1313,44 +1296,32 @@
     }
   }
 
-  // ========== ОБРАБОТЧИКИ ==========
-
-  function handleTextareaInput(e) {
-    autoResize(e.currentTarget);
-  }
+  function handleTextareaInput(e) { autoResize(e.currentTarget); }
 
   function handleSaveTranslation(e) {
     const btn = e.currentTarget;
     const key = btn.dataset.key;
     const entry = btn.closest('.entry');
     const textarea = entry.querySelector('.translation-input');
-    const newTranslation = textarea.value;
-    saveTranslation(key, newTranslation);
+    saveTranslation(key, textarea.value);
   }
 
   function handleTextareaKeydown(e) {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       const textarea = e.currentTarget;
-      const key = textarea.dataset.key;
-      const newTranslation = textarea.value;
-      saveTranslation(key, newTranslation);
+      saveTranslation(textarea.dataset.key, textarea.value);
     }
   }
 
   function handleInactiveToggle(e) {
-    const btn = e.currentTarget;
-    const key = btn.dataset.key;
-    toggleInactive(key);
+    toggleInactive(e.currentTarget.dataset.key);
   }
 
   function handleSimilar(e) {
-    const btn = e.currentTarget;
-    const key = btn.dataset.key;
-    showSimilarTranslations(key);
+    showSimilarTranslations(e.currentTarget.dataset.key);
   }
 
-  // ========== СОХРАНЕНИЕ КОММЕНТАРИЯ ==========
   function handleCommentSave(e) {
     const btn = e.currentTarget;
     const key = btn.dataset.key;
@@ -1361,7 +1332,6 @@
       alert('Комментарий не может быть пустым.');
       return;
     }
-
     const user = getCurrentUserInfo();
     const newComment = {
       author: user.uid,
@@ -1369,14 +1339,11 @@
       text: commentText,
       timestamp: Date.now()
     };
-
     const item = allData.find(d => d.key === key);
     if (!item) return;
     let comments = item.userComments || [];
     comments.push(newComment);
-    if (comments.length > 50) {
-      comments = comments.slice(-50);
-    }
+    if (comments.length > 50) comments = comments.slice(-50);
     stringsRef.child(key).update({ userComments: comments })
       .then(() => {
         const localItem = allData.find(d => d.key === key);
@@ -1387,16 +1354,13 @@
       .catch(err => alert('Ошибка сохранения комментария: ' + err.message));
   }
 
-  // ========== ПОКАЗ ВСЕХ КОММЕНТАРИЕВ ==========
   function showAllCommentsForKey(key) {
     const item = allData.find(d => d.key === key);
     if (!item) return;
     const comments = item.userComments || [];
     if (comments.length === 0) return;
-
     modalKeySpan.textContent = key;
     modalTitle.textContent = `Комментарии к фразе #${key}`;
-
     let listHtml = '';
     for (const c of comments) {
       const author = c.authorName || 'Аноним';
@@ -1415,47 +1379,32 @@
 
   container.addEventListener('click', function(e) {
     const btn = e.target.closest('.show-all-btn');
-    if (btn) {
-      const key = btn.dataset.key;
-      if (key) {
-        showAllCommentsForKey(key);
-      }
-    }
+    if (btn && btn.dataset.key) showAllCommentsForKey(btn.dataset.key);
   });
 
-  // Закрытие модальных окон
-  modalCloseBtn.addEventListener('click', () => {
-    commentsModal.classList.remove('active');
-  });
+  modalCloseBtn.addEventListener('click', () => { commentsModal.classList.remove('active'); });
   commentsModal.addEventListener('click', (e) => {
     if (e.target === commentsModal) commentsModal.classList.remove('active');
   });
-
-  similarModalClose.addEventListener('click', () => {
-    similarModal.classList.remove('active');
-  });
+  similarModalClose.addEventListener('click', () => { similarModal.classList.remove('active'); });
   similarModal.addEventListener('click', (e) => {
     if (e.target === similarModal) similarModal.classList.remove('active');
   });
 
-  // ========== ПОДТВЕРЖДЕНИЕ ==========
   function handleConfirmToggle(e) {
     const btn = e.currentTarget;
     const key = btn.dataset.key;
     const item = allData.find(d => d.key === key);
     if (!item) return;
-
     if (item.translation.trim() === '') {
       alert('Невозможно подтвердить: перевод отсутствует.');
       return;
     }
-
     const user = getCurrentUserInfo();
     if (user.role !== 'editor') {
       alert('Только редакторы могут подтверждать переводы.');
       return;
     }
-
     const newConfirmed = !item.confirmed;
     const updateData = {
       confirmed: newConfirmed,
@@ -1474,7 +1423,6 @@
       .catch(err => alert('Ошибка обновления подтверждения: ' + err.message));
   }
 
-  // ========== ПАРСИНГ .WTS ==========
   function parseWTS(text) {
     const regex = /STRING\s+(\d+)\s*(?:\/\/([^\n]*))?\s*\{([\s\S]*?)\}/g;
     const entries = [];
@@ -1483,14 +1431,11 @@
       const number = match[1];
       const comment = (match[2] || '').trim();
       const content = match[3];
-      if (content.trim() !== '') {
-        entries.push({ number, comment, content });
-      }
+      if (content.trim() !== '') entries.push({ number, comment, content });
     }
     return entries;
   }
 
-  // ========== ИМПОРТ ОРИГИНАЛЬНОГО .WTS (УНИКАЛЬНЫЕ ФРАЗЫ) ==========
   function importWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1504,22 +1449,15 @@
         if (!window.confirm(`Найдено ${parsed.length} непустых строк. Импортировать?`)) return;
 
         const norm = (t) => normalizeOriginalForCompare(t);
-
         const inactiveByContent = new Map();
         for (const item of allData) {
-          if (item.inactive) {
-            inactiveByContent.set(norm(item.original), true);
-          }
+          if (item.inactive) inactiveByContent.set(norm(item.original), true);
         }
 
         const parsedByTarget = new Map();
-        for (const p of parsed) {
-          parsedByTarget.set(String(p.number), p);
-        }
+        for (const p of parsed) parsedByTarget.set(String(p.number), p);
         const parsedByContent = new Map();
-        for (const p of parsedByTarget.values()) {
-          parsedByContent.set(norm(p.content), p);
-        }
+        for (const p of parsedByTarget.values()) parsedByContent.set(norm(p.content), p);
 
         const existingByContent = new Map();
         for (const item of allData) {
@@ -1528,7 +1466,6 @@
         }
 
         const replacedContents = new Set(parsedByContent.keys());
-
         const finalMap = new Map();
         for (const item of allData) {
           const c = norm(item.original);
@@ -1537,9 +1474,7 @@
         }
 
         const reservedIds = new Set();
-        for (const p of parsedByContent.values()) {
-          reservedIds.add(String(p.number));
-        }
+        for (const p of parsedByContent.values()) reservedIds.add(String(p.number));
 
         let maxId = 0;
         for (const k of finalMap.keys()) maxId = Math.max(maxId, parseInt(k) || 0);
@@ -1597,9 +1532,7 @@
 
         const updates = {};
         for (const item of allData) {
-          if (!finalMap.has(item.key)) {
-            updates[item.key] = null;
-          }
+          if (!finalMap.has(item.key)) updates[item.key] = null;
         }
         for (const [key, item] of finalMap) {
           updates[key] = {
@@ -1621,26 +1554,19 @@
         stringsRef.update(updates)
           .then(() => {
             const numbers = parsed.map(item => item.number);
-
             const structure = parsed.map(item => ({
               id: String(item.number),
               content: item.content,
               comment: item.comment || ''
             }));
-
-            metadataRef.set({
-              importedNumbers: numbers,
-              lastImportStructure: structure
-            })
+            metadataRef.set({ importedNumbers: numbers, lastImportStructure: structure })
               .then(() => {
                 importedNumbers = numbers;
                 lastImportStructure = structure;
                 filterByImported.checked = true;
                 currentPage = 0;
                 let msg = `Импортировано ${parsed.length} строк. Включён фильтр "Только загруженные".`;
-                if (relocatedCount > 0) {
-                  msg += `\nПеренесено старых фраз (конфликт по ID): ${relocatedCount}.`;
-                }
+                if (relocatedCount > 0) msg += `\nПеренесено старых фраз (конфликт по ID): ${relocatedCount}.`;
                 alert(msg);
                 render();
               })
@@ -1664,7 +1590,6 @@
     this.value = '';
   });
 
-  // ========== ИМПОРТ ПЕРЕВОДОВ ИЗ WTS — СОПОСТАВЛЕНИЕ ПО СОДЕРЖИМОМУ ==========
   function importTranslationsFromWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1675,56 +1600,38 @@
           alert('Не удалось найти ни одной непустой строки STRING в файле.');
           return;
         }
-
         const user = getCurrentUserInfo();
         const shouldConfirm = confirmImportedTranslations.checked;
-
         const structureById = new Map();
-        for (const s of lastImportStructure) {
-          structureById.set(String(s.id), s);
-        }
-
+        for (const s of lastImportStructure) structureById.set(String(s.id), s);
         const dbByContent = new Map();
         for (const item of allData) {
           const c = normalizeOriginalForCompare(item.original);
           if (!dbByContent.has(c)) dbByContent.set(c, item.key);
         }
-
         const updates = {};
         let added = 0;
         let skippedUntranslated = 0;
         const notFound = [];
-
         for (const item of parsed) {
           const id = String(item.number);
           const transContent = item.content.trim();
           if (!transContent) continue;
-
           let origContent = null;
           const struct = structureById.get(id);
-          if (struct) {
-            origContent = struct.content;
-          } else {
+          if (struct) origContent = struct.content;
+          else {
             const byId = allData.find(d => d.key === id);
             if (byId) origContent = byId.original;
           }
-          if (!origContent) {
-            notFound.push(id);
-            continue;
-          }
-
+          if (!origContent) { notFound.push(id); continue; }
           if (normalizeOriginalForCompare(transContent) === normalizeOriginalForCompare(origContent)) {
             skippedUntranslated++;
             continue;
           }
-
           const normOrig = normalizeOriginalForCompare(origContent);
           const dbKey = dbByContent.get(normOrig);
-          if (!dbKey) {
-            notFound.push(id);
-            continue;
-          }
-
+          if (!dbKey) { notFound.push(id); continue; }
           const updateData = {
             translation: transContent,
             translationAuthor: user.uid,
@@ -1738,25 +1645,18 @@
           updates[dbKey] = updateData;
           added++;
         }
-
         if (added === 0) {
           let msg = `Не найдено переводов для загрузки.\nПропущено непереведённых фраз: ${skippedUntranslated}.`;
-          if (notFound.length > 0) {
-            msg += `\nНе найдено в базе по ID: ${notFound.length}.`;
-          }
+          if (notFound.length > 0) msg += `\nНе найдено в базе по ID: ${notFound.length}.`;
           alert(msg);
           return;
         }
-
-        const confirmMsg = shouldConfirm
-          ? ' (будут помечены как ПОДТВЕРЖДЁННЫЕ)'
-          : ' (без подтверждения)';
+        const confirmMsg = shouldConfirm ? ' (будут помечены как ПОДТВЕРЖДЁННЫЕ)' : ' (без подтверждения)';
         if (!window.confirm(
           `Найдено переводов для загрузки: ${added}.\n` +
           `Пропущено непереведённых: ${skippedUntranslated}.\n` +
           `Не найдено в базе: ${notFound.length}.${confirmMsg}\n\nПродолжить?`
         )) return;
-
         const promiseArray = [];
         for (const [key, data] of Object.entries(updates)) {
           promiseArray.push(stringsRef.child(key).update(data));
@@ -1798,12 +1698,10 @@
     this.value = '';
   });
 
-  // ========== ЭКСПОРТ ==========
   function generateWTSFromStructure(data, structure) {
     const index = buildContentIndex(data);
     let output = '';
     let exportedCount = 0;
-
     for (const s of structure) {
       const c = normalizeForMatch(s.content);
       const dbKey = index.get(c);
@@ -1817,7 +1715,6 @@
       output += `\n{\n${textToWrite}\n}\n\n`;
       exportedCount++;
     }
-
     return { text: output, count: exportedCount };
   }
 
@@ -1828,18 +1725,15 @@
         alert('Нет данных для экспорта.');
         return;
       }
-
       if (!lastImportStructure || lastImportStructure.length === 0) {
         alert('Нет данных о последнем загруженном файле.\nСначала загрузите .wts с оригинальными фразами.');
         return;
       }
-
       const result = generateWTSFromStructure(data, lastImportStructure);
       if (result.count === 0) {
         alert('Ни одна фраза из последнего загруженного файла не найдена в базе. Экспорт отменён.');
         return;
       }
-
       const blob = new Blob([result.text], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1855,44 +1749,32 @@
 
   exportBtn.addEventListener('click', exportWTS);
 
-  // ========== СКАЧИВАНИЕ ВСЕЙ БАЗЫ ДАННЫХ ==========
   function downloadDatabase() {
     const user = getCurrentUserInfo();
     if (!user.canManageDb) {
       alert('У вас нет прав на скачивание базы данных.');
       return;
     }
-
-    Promise.all([
-      stringsRef.once('value'),
-      metadataRef.once('value')
-    ])
+    Promise.all([stringsRef.once('value'), metadataRef.once('value')])
       .then(([stringsSnap, metadataSnap]) => {
         const stringsData = stringsSnap.val() || {};
         const metadataData = metadataSnap.val() || {};
-
         const backup = {
           _meta: {
             exportedAt: new Date().toISOString(),
-            exportedBy: {
-              uid: user.uid,
-              displayName: user.displayName
-            },
+            exportedBy: { uid: user.uid, displayName: user.displayName },
             version: 1,
             stringsCount: Object.keys(stringsData).length
           },
           strings: stringsData,
           metadata: metadataData
         };
-
         const json = JSON.stringify(backup, null, 2);
         const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
         const url = URL.createObjectURL(blob);
-
         const now = new Date();
         const ts = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}`;
         const filename = `kotmysh_db_backup_${ts}.json`;
-
         const a = document.createElement('a');
         a.href = url;
         a.download = filename;
@@ -1900,7 +1782,6 @@
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-
         alert(`База данных выгружена.\nФраз: ${Object.keys(stringsData).length}\nФайл: ${filename}`);
       })
       .catch(err => {
@@ -1911,68 +1792,48 @@
 
   dbDownloadBtn.addEventListener('click', downloadDatabase);
 
-  // ========== ВОССТАНОВЛЕНИЕ БАЗЫ ДАННЫХ ИЗ ФАЙЛА ==========
   function restoreDatabase(file) {
     const user = getCurrentUserInfo();
     if (!user.canManageDb) {
       alert('У вас нет прав на восстановление базы данных.');
       return;
     }
-
     const reader = new FileReader();
     reader.onload = function(e) {
       try {
         const text = e.target.result;
         let backup;
-        try {
-          backup = JSON.parse(text);
-        } catch (parseErr) {
-          alert('Файл не является корректным JSON.');
-          return;
-        }
-
+        try { backup = JSON.parse(text); }
+        catch (parseErr) { alert('Файл не является корректным JSON.'); return; }
         if (!backup || typeof backup !== 'object') {
           alert('Неверный формат файла бэкапа.');
           return;
         }
-
         const stringsData = backup.strings || {};
         const metadataData = backup.metadata || {};
         const stringsCount = Object.keys(stringsData).length;
-
         if (stringsCount === 0 && Object.keys(metadataData).length === 0) {
           alert('Файл не содержит данных для восстановления.');
           return;
         }
-
         const meta = backup._meta || {};
         const exportedInfo = meta.exportedAt
-          ? `\nДата экспорта: ${new Date(meta.exportedAt).toLocaleString('ru-RU')}`
-          : '';
+          ? `\nДата экспорта: ${new Date(meta.exportedAt).toLocaleString('ru-RU')}` : '';
         const authorInfo = meta.exportedBy && meta.exportedBy.displayName
-          ? `\nЭкспортировал: ${meta.exportedBy.displayName}`
-          : '';
-
+          ? `\nЭкспортировал: ${meta.exportedBy.displayName}` : '';
         if (!confirm(
           `ВНИМАНИЕ! Восстановление базы данных ПОЛНОСТЬЮ ЗАМЕНИТ текущее содержимое.\n\n` +
           `В файле: ${stringsCount} фраз.${exportedInfo}${authorInfo}\n\n` +
           `Текущее содержимое будет безвозвратно удалено. Продолжить?`
         )) return;
-
         const code = prompt('Для подтверждения введите слово "ВОССТАНОВИТЬ" (без кавычек):');
         if (code !== 'ВОССТАНОВИТЬ') {
           alert('Операция отменена. Код не совпадает.');
           return;
         }
-
-        if (!confirm('Последний шанс! Заменить всю базу данных содержимым файла?')) {
-          return;
-        }
-
+        if (!confirm('Последний шанс! Заменить всю базу данных содержимым файла?')) return;
         stringsRef.set(stringsData)
-          .then(() => {
-            return metadataRef.set(metadataData);
-          })
+          .then(() => metadataRef.set(metadataData))
           .then(() => {
             importedNumbers = Array.isArray(metadataData.importedNumbers) ? metadataData.importedNumbers : [];
             lastImportStructure = Array.isArray(metadataData.lastImportStructure) ? metadataData.lastImportStructure : [];
@@ -1998,18 +1859,13 @@
     this.value = '';
   });
 
-  // ========== ПРИНУДИТЕЛЬНАЯ ПОЧИНКА БАЗЫ ДАННЫХ (КНОПКА) ==========
   function repairDatabase() {
     const user = getCurrentUserInfo();
     if (!user.canManageDb) {
       alert('У вас нет прав на починку базы данных.');
       return;
     }
-
-    if (!confirm('Пройтись по всем записям и попытаться починить повреждённые поля original и translation?')) {
-      return;
-    }
-
+    if (!confirm('Пройтись по всем записям и попытаться починить повреждённые поля original и translation?')) return;
     stringsRef.once('value')
       .then((snap) => {
         const data = snap.val() || {};
@@ -2017,14 +1873,11 @@
         let fixedOriginalCount = 0;
         let fixedTranslationCount = 0;
         const details = [];
-
         for (const [key, entry] of Object.entries(data)) {
           const rawOriginal = entry.original || '';
           const rawTranslation = entry.translation || '';
-
           const fixedOriginal = repairCorruptedField(rawOriginal, 'original');
           const fixedTranslation = repairCorruptedField(rawTranslation, 'translation');
-
           if (fixedOriginal !== rawOriginal) {
             updates[key + '/original'] = fixedOriginal;
             fixedOriginalCount++;
@@ -2036,12 +1889,10 @@
             details.push('#' + key + ' → translation');
           }
         }
-
         if (Object.keys(updates).length === 0) {
           alert('Повреждённых записей не найдено.');
           return;
         }
-
         stringsRef.update(updates)
           .then(() => {
             let msg = 'Починка завершена.\n';
@@ -2059,13 +1910,11 @@
 
   dbRepairBtn.addEventListener('click', repairDatabase);
 
-  // ========== УПРАВЛЕНИЕ ПАГИНАЦИЕЙ ==========
   function goToPage(page) {
     const displayItems = getDisplayItems();
     const totalPages = itemsPerPage === 0 ? 1 : Math.ceil(displayItems.length / itemsPerPage);
-    if (totalPages === 0) {
-      currentPage = 0;
-    } else {
+    if (totalPages === 0) currentPage = 0;
+    else {
       if (page < 0) page = 0;
       if (page >= totalPages) page = totalPages - 1;
       currentPage = page;
@@ -2093,14 +1942,9 @@
   }
 
   gotoPageBtn.addEventListener('click', handleGoto);
-  pageInput.addEventListener('keypress', function(e) {
-    if (e.key === 'Enter') handleGoto();
-  });
+  pageInput.addEventListener('keypress', function(e) { if (e.key === 'Enter') handleGoto(); });
 
-  searchInput.addEventListener('input', function() {
-    currentPage = 0;
-    render();
-  });
+  searchInput.addEventListener('input', () => { currentPage = 0; render(); });
 
   filterOnlyRussian.addEventListener('change', () => { currentPage = 0; render(); });
   filterNoTranslation.addEventListener('change', () => { currentPage = 0; render(); });
@@ -2110,23 +1954,17 @@
   filterInactive.addEventListener('change', () => { currentPage = 0; render(); });
   groupMode.addEventListener('change', () => { currentPage = 0; render(); });
 
-  refreshBtn.addEventListener('click', () => {
-    stringsRef.once('value', () => render());
-  });
+  refreshBtn.addEventListener('click', () => { stringsRef.once('value', () => render()); });
 
-  // ========== СЛУШАТЕЛЬ МЕТАДАННЫХ ==========
   metadataRef.on('value', (snapshot) => {
     const data = snapshot.val();
     if (data && data.importedNumbers) {
       importedNumbers = data.importedNumbers;
       lastImportStructure = Array.isArray(data.lastImportStructure) ? data.lastImportStructure : [];
-      if (filterByImported.checked) {
-        render();
-      }
+      if (filterByImported.checked) render();
     }
   });
 
-  // ========== ЗАГРУЗКА МЕТАДАННЫХ ПРИ СТАРТЕ ==========
   metadataRef.once('value', (snapshot) => {
     const data = snapshot.val();
     if (data && data.importedNumbers) {
@@ -2137,25 +1975,20 @@
     }
   });
 
-  // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В БАЗЕ (с авто-починкой) ==========
+  // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В БАЗЕ (с авто-починкой JSON-мусора) ==========
   stringsRef.on('value', (snapshot) => {
     const data = snapshot.val();
-    if (!data) {
-      allData = [];
-      render();
-      return;
-    }
+    if (!data) { allData = []; render(); return; }
     const entries = Object.entries(data).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
     allData = entries.map(([key, entry]) => {
       let wtsComment = entry.wtsComment || '';
       let userComments = entry.userComments || [];
-      if (entry.comment && !wtsComment) {
-        wtsComment = entry.comment;
-      }
+      if (entry.comment && !wtsComment) wtsComment = entry.comment;
 
       const rawOriginal = entry.original || '';
       const rawTranslation = entry.translation || '';
 
+      // Починка JSON-мусора (без удаления WTS-тегов)
       const fixedOriginal = repairCorruptedField(rawOriginal, 'original');
       const fixedTranslation = repairCorruptedField(rawTranslation, 'translation');
 
@@ -2189,7 +2022,6 @@
     render();
   });
 
-  // ========== ПОДКЛЮЧЕНИЕ ==========
   const connectedRef = firebase.database().ref('.info/connected');
   connectedRef.on('value', (snap) => {
     if (snap.val()) {
