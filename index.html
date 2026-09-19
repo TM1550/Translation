@@ -682,6 +682,35 @@
     return str.replace(/\s+/g, ' ').trim();
   }
 
+  // ========== ЗАЩИТА ОТ JSON-МУСОРА В ПОЛЕ original/translation ==========
+  // Определяет, похож ли текст на JSON-строку целой записи
+  function looksLikeCorruptedJson(text) {
+    if (!text || typeof text !== 'string') return false;
+    return /"(original|translationAuthor|translationAuthorName|wtsComment|confirmedBy)"\s*:/.test(text);
+  }
+
+  // Пытается извлечь настоящее значение поля "original" из повреждённой JSON-строки
+  function repairCorruptedOriginal(text) {
+    if (!looksLikeCorruptedJson(text)) return text;
+
+    // Ищем "original":"..." с учётом экранирования
+    const m = text.match(/"original"\s*:\s*"((?:\\.|[^"\\])*)"/);
+    if (!m) return text;
+
+    try {
+      // JSON.parse корректно раскодирует \n, \" и т.п.
+      return JSON.parse('"' + m[1] + '"');
+    } catch (e) {
+      // Запасной вариант — ручная распаковка escape-последовательностей
+      return m[1]
+        .replace(/\\r/g, '\r')
+        .replace(/\\n/g, '\n')
+        .replace(/\\t/g, '\t')
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, '\\');
+    }
+  }
+
   // ========== ШАБЛОН ГРУППИРОВКИ (ТОЛЬКО КИРИЛЛИЦА) ==========
   function makePattern(str) {
     if (!str) return '';
@@ -694,21 +723,17 @@
 
   // ========== ПОДСТАНОВКА ПЕРЕВОДА МЕЖДУ УЧАСТНИКАМИ ГРУППЫ ==========
 
-  // Экранирование спецсимволов для RegExp
   function escapeRegExp(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   // Подставляет в перевод отличия идентификаторов из блоков <...>
-  // между sourceOriginal и targetOriginal. Например:
-  //   source: <A0KB,DataE1,.>   target: <A0K9,DataE1,.>
-  //   → в переводе A0KB заменится на A0K9
+  // между sourceOriginal и targetOriginal.
   function substituteIdentifiers(translation, sourceOriginal, targetOriginal) {
     const blockRe = /<[^>]*>/g;
     const srcBlocks = sourceOriginal.match(blockRe) || [];
     const tgtBlocks = targetOriginal.match(blockRe) || [];
 
-    // Если структур разное количество — ничего не делаем (безопасный fallback)
     if (srcBlocks.length === 0 || srcBlocks.length !== tgtBlocks.length) {
       return translation;
     }
@@ -720,7 +745,6 @@
       const t = tgtBlocks[i];
       if (s === t) continue;
 
-      // Разбиваем содержимое <...> по запятым
       const sParts = s.slice(1, -1).split(',');
       const tParts = t.slice(1, -1).split(',');
       if (sParts.length !== tParts.length) continue;
@@ -729,7 +753,6 @@
         const a = sParts[j].trim();
         const b = tParts[j].trim();
         if (a === b) continue;
-        // Подставляем только «словные» идентификаторы (буквы/цифры/подчёркивания)
         if (/^[A-Za-z0-9_]+$/.test(a) && /^[A-Za-z0-9_]+$/.test(b)) {
           substitutions.set(a, b);
         }
@@ -747,13 +770,9 @@
   }
 
   // Применяет перевод одного участника группы к другому.
-  // 1) Подставляет идентификаторы из <...> по разнице sourceOriginal → targetOriginal
-  // 2) Затем выполняет прежнюю подстановку чисел из targetOriginal
   function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
-    // Шаг 1. Идентификаторы (<...>)
     let result = substituteIdentifiers(templateTranslation, sourceOriginal, targetOriginal);
 
-    // Шаг 2. Числа (прежнее поведение)
     const numbers = extractNumbers(targetOriginal);
     let index = 0;
     result = result.replace(/\d+/g, function(match) {
@@ -879,6 +898,15 @@
 
   // ========== ОСНОВНАЯ ЛОГИКА СОХРАНЕНИЯ ПЕРЕВОДА ==========
   function saveTranslation(key, newTranslation) {
+    // ЗАЩИТА ОТ ЗАПИСИ JSON-МУСОРА
+    if (looksLikeCorruptedJson(newTranslation)) {
+      alert(
+        'Похоже, в поле перевода попал JSON-мусор. Это не будет сохранено.\n' +
+        'Проверьте, что вы вставляете именно перевод, а не данные из другого источника.'
+      );
+      return;
+    }
+
     const item = allData.find(d => d.key === key);
     if (!item) return;
     const user = getCurrentUserInfo();
@@ -911,8 +939,6 @@
           if (member.key === key) {
             memberTranslation = newTranslation;
           } else {
-            // Передаём оригинал текущей фразы (источник) и оригинал участника (цель),
-            // чтобы функция могла подставить идентификаторы из <...>.
             memberTranslation = applyTranslationToMember(newTranslation, item.original, member.original);
           }
           const localItem = allData.find(d => d.key === member.key);
@@ -1988,7 +2014,7 @@
     }
   });
 
-  // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В БАЗЕ ==========
+  // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В БАЗЕ (с авто-починкой повреждённых original) ==========
   stringsRef.on('value', (snapshot) => {
     const data = snapshot.val();
     if (!data) {
@@ -2003,9 +2029,22 @@
       if (entry.comment && !wtsComment) {
         wtsComment = entry.comment;
       }
+
+      const rawOriginal = entry.original || '';
+      const fixedOriginal = repairCorruptedOriginal(rawOriginal);
+
+      // Если нашли повреждение — пишем исправленное значение обратно в БД.
+      // Это одноразовая операция: после записи JSON-признаки исчезнут,
+      // и повторного срабатывания не будет.
+      if (fixedOriginal !== rawOriginal) {
+        console.warn('Повреждённый original в #' + key + ' — исправляю автоматически.');
+        stringsRef.child(key).update({ original: fixedOriginal })
+          .catch(err => console.warn('Не удалось починить #' + key + ':', err));
+      }
+
       return {
         key,
-        original: entry.original || '',
+        original: fixedOriginal,
         translation: entry.translation || '',
         translationAuthor: entry.translationAuthor || '',
         translationAuthorName: entry.translationAuthorName || '',
