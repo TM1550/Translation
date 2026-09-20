@@ -388,7 +388,7 @@
     </label>
     <button class="export-btn" id="exportBtn" style="display:none;"> Скачать .wts</button>
 
-    <button class="db-download-btn" id="dbDownloadBtn" style="display:none;">💾 Скачать БД</button>
+    <button class="db-download-btn" id="dbDownloadBtn" style="display:none;"> Скачать БД</button>
     <button class="db-restore-btn" id="dbRestoreBtn" style="display:none;">📤 Восстановить БД</button>
     <input type="file" id="dbRestoreInput" accept=".json" style="display:none;">
 
@@ -403,7 +403,7 @@
     </div>
 
     <div class="search-group">
-      <input type="text" id="searchInput" placeholder="🔍 Поиск по фразе">
+      <input type="text" id="searchInput" placeholder=" Поиск по фразе, переводу или комментарию">
     </div>
 
     <div class="pagination">
@@ -444,7 +444,7 @@
   </div>
 
   <div class="status">
-    <span id="connectionStatus">⏳ Подключение...</span>
+    <span id="connectionStatus"> Подключение...</span>
     <span id="countStatus">0</span>
   </div>
 </div>
@@ -800,7 +800,8 @@
       filtered = filtered.filter(item => {
         const orig = (item.original || '').toLowerCase();
         const trans = (item.translation || '').toLowerCase();
-        return orig.includes(searchTerm) || trans.includes(searchTerm);
+        const wtsComment = (item.wtsComment || '').toLowerCase();
+        return orig.includes(searchTerm) || trans.includes(searchTerm) || wtsComment.includes(searchTerm);
       });
     }
 
@@ -1113,7 +1114,6 @@
         if (inactive) entryClasses += ' inactive';
         if (groupMode.checked && item._groupMembers && item._groupMembers.length > 1) entryClasses += ' group-header';
 
-        // ИСПРАВЛЕНИЕ: используем encodeURIComponent для безопасного кодирования JSON
         const groupDataEncoded = item._groupMembers ? encodeURIComponent(JSON.stringify(item._groupMembers)) : '';
 
         const leftColHtml = `
