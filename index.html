@@ -389,7 +389,7 @@
     <button class="export-btn" id="exportBtn" style="display:none;"> Скачать .wts</button>
 
     <button class="db-download-btn" id="dbDownloadBtn" style="display:none;">💾 Скачать БД</button>
-    <button class="db-restore-btn" id="dbRestoreBtn" style="display:none;">📤 Восстановить БД</button>
+    <button class="db-restore-btn" id="dbRestoreBtn" style="display:none;"> Восстановить БД</button>
     <input type="file" id="dbRestoreInput" accept=".json" style="display:none;">
 
     <div class="filter-group">
@@ -744,68 +744,98 @@
     return cleanWtsText(text || '').toLowerCase();
   }
 
-  // Новая версия функции applyTranslationToMember с поддержкой WTS-тегов
-function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
-  // Сначала применяем существующую логику для идентификаторов и чисел
-  let processedTranslation = substituteIdentifiers(templateTranslation, sourceOriginal, targetOriginal);
+  // Улучшенная версия функции applyTranslationToMember с пропорциональным распределением
+  function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
+    // Сначала применяем существующую логику для идентификаторов и чисел
+    let processedTranslation = substituteIdentifiers(templateTranslation, sourceOriginal, targetOriginal);
 
-  const numbers = extractNumbers(targetOriginal);
-  let index = 0;
-  processedTranslation = processedTranslation.replace(/\d+/g, function(match) {
-    if (index < numbers.length) {
-      return numbers[index++];
-    }
-    return match;
-  });
-
-  // Разбиваем источник и перевод на токены (слова и WTS-теги)
-  const tokenize = (text) => {
-    const tokens = [];
-    const regex = /(\|c[0-9a-fA-F]{6,8}|\|r|[а-яёa-z0-9_]+|[^\sа-яёa-z0-9_])/gi;
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-      tokens.push(match[0]);
-    }
-    return tokens;
-  };
-
-  const sourceTokens = tokenize(sourceOriginal);
-  const transTokens = tokenize(processedTranslation);
-
-  // Создаём маппинг: русское слово из источника -> соответствующий токен из перевода
-  const wordMap = new Map();
-  let transIdx = 0;
-  for (let i = 0; i < sourceTokens.length && transIdx < transTokens.length; i++) {
-    const srcToken = sourceTokens[i];
-    // Если это русское слово
-    if (/^[а-яё]+$/i.test(srcToken)) {
-      // Находим соответствующий токен в переводе (пропуская теги)
-      while (transIdx < transTokens.length && (/^\|c[0-9a-fA-F]{6,8}$/.test(transTokens[transIdx]) || transTokens[transIdx] === '|r')) {
-        transIdx++;
+    const numbers = extractNumbers(targetOriginal);
+    let index = 0;
+    processedTranslation = processedTranslation.replace(/\d+/g, function(match) {
+      if (index < numbers.length) {
+        return numbers[index++];
       }
-      if (transIdx < transTokens.length) {
-        wordMap.set(srcToken.toLowerCase(), transTokens[transIdx]);
-        transIdx++;
+      return match;
+    });
+
+    // Токенизация: разбиваем текст на слова и WTS-теги
+    const tokenize = (text) => {
+      const tokens = [];
+      const regex = /(\|c[0-9a-fA-F]{6,8}|\|r|[а-яёa-z0-9_]+|[^\sа-яёa-z0-9_])/gi;
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        tokens.push(match[0]);
+      }
+      return tokens;
+    };
+
+    const sourceTokens = tokenize(sourceOriginal);
+    const transTokens = tokenize(processedTranslation);
+
+    // Находим индексы русских слов в источнике
+    const sourceRussianIndices = [];
+    for (let i = 0; i < sourceTokens.length; i++) {
+      if (/^[а-яё]+$/i.test(sourceTokens[i])) {
+        sourceRussianIndices.push(i);
       }
     }
-  }
 
-  // Разбиваем оригинал цели на части по WTS-тегам
-  const parts = targetOriginal.split(/(\|c[0-9a-fA-F]{6,8}|\|r)/g);
-
-  for (let i = 0; i < parts.length; i++) {
-    // Пропускаем WTS-теги
-    if (/^\|c[0-9a-fA-F]{6,8}$/.test(parts[i]) || parts[i] === '|r') continue;
-
-    // Заменяем каждое русское слово на его перевод
-    for (const [sourceWord, translation] of wordMap) {
-      const regex = new RegExp('(?<![а-яёa-z0-9_])' + escapeRegExp(sourceWord) + '(?![а-яёa-z0-9_])', 'gi');
-      parts[i] = parts[i].replace(regex, translation);
+    // Находим индексы "смысловых" токенов в переводе (слова, не теги и не знаки препинания)
+    const transMeaningfulIndices = [];
+    for (let i = 0; i < transTokens.length; i++) {
+      if (!/^\|c[0-9a-fA-F]{6,8}$/.test(transTokens[i]) && transTokens[i] !== '|r' && /^[а-яёa-z0-9_]+$/i.test(transTokens[i])) {
+        transMeaningfulIndices.push(i);
+      }
     }
-  }
 
-  return parts.join('');
-}
+    // Создаём маппинг: русское слово из источника -> соответствующие токены из перевода
+    const wordMap = new Map();
+    
+    if (sourceRussianIndices.length === 0 || transMeaningfulIndices.length === 0) {
+      return processedTranslation;
+    }
+
+    // Распределяем токены перевода по русским словам источника
+    const numRussianWords = sourceRussianIndices.length;
+    const numTransTokens = transMeaningfulIndices.length;
+    
+    for (let i = 0; i < numRussianWords; i++) {
+      const sourceWord = sourceTokens[sourceRussianIndices[i]].toLowerCase();
+      
+      let transParts = [];
+      
+      if (numTransTokens >= numRussianWords) {
+        // Токенов больше или равно — распределяем пропорционально
+        const startIdx = Math.floor(i * numTransTokens / numRussianWords);
+        const endIdx = Math.floor((i + 1) * numTransTokens / numRussianWords);
+        for (let j = startIdx; j < endIdx; j++) {
+          transParts.push(transTokens[transMeaningfulIndices[j]]);
+        }
+      } else {
+        // Токенов меньше — повторяем токены циклически
+        const tokenIdx = i % numTransTokens;
+        transParts.push(transTokens[transMeaningfulIndices[tokenIdx]]);
+      }
+      
+      wordMap.set(sourceWord, transParts.join(' '));
+    }
+
+    // Разбиваем оригинал цели на части по WTS-тегам
+    const parts = targetOriginal.split(/(\|c[0-9a-fA-F]{6,8}|\|r)/g);
+
+    for (let i = 0; i < parts.length; i++) {
+      // Пропускаем WTS-теги
+      if (/^\|c[0-9a-fA-F]{6,8}$/.test(parts[i]) || parts[i] === '|r') continue;
+
+      // Заменяем каждое русское слово на его перевод
+      for (const [sourceWord, translation] of wordMap) {
+        const regex = new RegExp('(?<![а-яёa-z0-9_])' + escapeRegExp(sourceWord) + '(?![а-яёa-z0-9_])', 'gi');
+        parts[i] = parts[i].replace(regex, translation);
+      }
+    }
+
+    return parts.join('');
+  }
 
   function buildContentIndex(data) {
     const index = new Map();
