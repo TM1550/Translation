@@ -371,7 +371,7 @@
   <div class="auth-bar" id="authBar">
     <span class="user-info" id="userInfo">Не авторизован</span>
     <span class="role-badge" id="roleBadge" style="display:none;"></span>
-    <span class="admin-badge" id="adminBadge" style="display:none;">🛡️ Админ БД</span>
+    <span class="admin-badge" id="adminBadge" style="display:none;">️ Админ БД</span>
     <button id="loginGoogleBtn">Войти через Google</button>
     <button id="setNameBtn" class="set-name-btn" style="display:none;">Задать имя</button>
     <button id="logoutBtn">Выйти</button>
@@ -744,97 +744,115 @@
     return cleanWtsText(text || '').toLowerCase();
   }
 
-  // Улучшенная версия функции applyTranslationToMember с пропорциональным распределением
+  // Новая версия функции applyTranslationToMember с работой по сегментам между WTS-тегами
   function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
-    // Сначала применяем существующую логику для идентификаторов и чисел
+    // Сначала применяем существующую логику для идентификаторов
     let processedTranslation = substituteIdentifiers(templateTranslation, sourceOriginal, targetOriginal);
 
-    const numbers = extractNumbers(targetOriginal);
-    let index = 0;
-    processedTranslation = processedTranslation.replace(/\d+/g, function(match) {
-      if (index < numbers.length) {
-        return numbers[index++];
-      }
-      return match;
-    });
+    // Применяем числовую подстановку только если в переводе ещё нет чисел
+    const hasNumbersInTranslation = /\d/.test(processedTranslation);
+    
+    if (!hasNumbersInTranslation) {
+      const numbers = extractNumbers(targetOriginal);
+      let index = 0;
+      processedTranslation = processedTranslation.replace(/\d+/g, function(match) {
+        if (index < numbers.length) {
+          return numbers[index++];
+        }
+        return match;
+      });
+    }
 
-    // Токенизация: разбиваем текст на слова и WTS-теги
-    const tokenize = (text) => {
-      const tokens = [];
-      const regex = /(\|c[0-9a-fA-F]{6,8}|\|r|[а-яёa-z0-9_]+|[^\sа-яёa-z0-9_])/gi;
+    // Функция для разбивки текста на сегменты между WTS-тегами
+    const splitByWtsTags = (text) => {
+      const segments = [];
+      const regex = /(\|c[0-9a-fA-F]{6,8}|\|r)/g;
+      let lastIndex = 0;
       let match;
+      
       while ((match = regex.exec(text)) !== null) {
-        tokens.push(match[0]);
+        // Добавляем текстовый сегмент перед тегом
+        if (match.index > lastIndex) {
+          segments.push({ type: 'text', content: text.slice(lastIndex, match.index) });
+        }
+        // Добавляем сам тег
+        segments.push({ type: 'tag', content: match[0] });
+        lastIndex = match.index + match[0].length;
       }
-      return tokens;
+      
+      // Добавляем последний текстовый сегмент
+      if (lastIndex < text.length) {
+        segments.push({ type: 'text', content: text.slice(lastIndex) });
+      }
+      
+      return segments;
     };
 
-    const sourceTokens = tokenize(sourceOriginal);
-    const transTokens = tokenize(processedTranslation);
+    const sourceSegments = splitByWtsTags(sourceOriginal);
+    const transSegments = splitByWtsTags(processedTranslation);
+    const targetSegments = splitByWtsTags(targetOriginal);
 
-    // Находим индексы русских слов в источнике
-    const sourceRussianIndices = [];
-    for (let i = 0; i < sourceTokens.length; i++) {
-      if (/^[а-яё]+$/i.test(sourceTokens[i])) {
-        sourceRussianIndices.push(i);
-      }
-    }
-
-    // Находим индексы "смысловых" токенов в переводе (слова, не теги и не знаки препинания)
-    const transMeaningfulIndices = [];
-    for (let i = 0; i < transTokens.length; i++) {
-      if (!/^\|c[0-9a-fA-F]{6,8}$/.test(transTokens[i]) && transTokens[i] !== '|r' && /^[а-яёa-z0-9_]+$/i.test(transTokens[i])) {
-        transMeaningfulIndices.push(i);
-      }
-    }
-
-    // Создаём маппинг: русское слово из источника -> соответствующие токены из перевода
-    const wordMap = new Map();
+    // Создаём маппинг сегментов: текстовый сегмент источника -> текстовый сегмент перевода
+    // Сопоставляем по позициям (игнорируя теги)
+    const sourceTextSegments = sourceSegments.filter(s => s.type === 'text');
+    const transTextSegments = transSegments.filter(s => s.type === 'text');
     
-    if (sourceRussianIndices.length === 0 || transMeaningfulIndices.length === 0) {
-      return processedTranslation;
+    const segmentMap = new Map();
+    for (let i = 0; i < sourceTextSegments.length && i < transTextSegments.length; i++) {
+      segmentMap.set(sourceTextSegments[i].content, transTextSegments[i].content);
     }
 
-    // Распределяем токены перевода по русским словам источника
-    const numRussianWords = sourceRussianIndices.length;
-    const numTransTokens = transMeaningfulIndices.length;
-    
-    for (let i = 0; i < numRussianWords; i++) {
-      const sourceWord = sourceTokens[sourceRussianIndices[i]].toLowerCase();
+    // Обрабатываем цель: для каждого текстового сегмента заменяем русские слова
+    const resultSegments = targetSegments.map(segment => {
+      if (segment.type !== 'text') return segment;
       
-      let transParts = [];
+      let text = segment.content;
       
-      if (numTransTokens >= numRussianWords) {
-        // Токенов больше или равно — распределяем пропорционально
-        const startIdx = Math.floor(i * numTransTokens / numRussianWords);
-        const endIdx = Math.floor((i + 1) * numTransTokens / numRussianWords);
-        for (let j = startIdx; j < endIdx; j++) {
-          transParts.push(transTokens[transMeaningfulIndices[j]]);
+      // Для каждого маппинга сегментов
+      for (const [sourceText, transText] of segmentMap) {
+        // Находим русские слова в сегменте источника
+        const sourceWords = sourceText.match(/[а-яё]+/gi);
+        const transWords = transText.match(/[а-яёa-z0-9_]+/gi);
+        
+        if (!sourceWords || sourceWords.length === 0) continue;
+        
+        // Создаём маппинг слов внутри сегмента
+        const wordMap = new Map();
+        const numSourceWords = sourceWords.length;
+        const numTransWords = transWords ? transWords.length : 0;
+        
+        if (numTransWords === 0) continue;
+        
+        for (let i = 0; i < numSourceWords; i++) {
+          let transWord;
+          if (numTransWords >= numSourceWords) {
+            // Пропорциональное распределение
+            const startIdx = Math.floor(i * numTransWords / numSourceWords);
+            const endIdx = Math.floor((i + 1) * numTransWords / numSourceWords);
+            const words = [];
+            for (let j = startIdx; j < endIdx; j++) {
+              words.push(transWords[j]);
+            }
+            transWord = words.join(' ');
+          } else {
+            // Циклическое повторение
+            transWord = transWords[i % numTransWords];
+          }
+          wordMap.set(sourceWords[i].toLowerCase(), transWord);
         }
-      } else {
-        // Токенов меньше — повторяем токены циклически
-        const tokenIdx = i % numTransTokens;
-        transParts.push(transTokens[transMeaningfulIndices[tokenIdx]]);
+        
+        // Заменяем русские слова в текстовом сегменте
+        for (const [sourceWord, transWord] of wordMap) {
+          const regex = new RegExp('(?<![а-яёa-z0-9_])' + escapeRegExp(sourceWord) + '(?![а-яёa-z0-9_])', 'gi');
+          text = text.replace(regex, transWord);
+        }
       }
       
-      wordMap.set(sourceWord, transParts.join(' '));
-    }
+      return { type: 'text', content: text };
+    });
 
-    // Разбиваем оригинал цели на части по WTS-тегам
-    const parts = targetOriginal.split(/(\|c[0-9a-fA-F]{6,8}|\|r)/g);
-
-    for (let i = 0; i < parts.length; i++) {
-      // Пропускаем WTS-теги
-      if (/^\|c[0-9a-fA-F]{6,8}$/.test(parts[i]) || parts[i] === '|r') continue;
-
-      // Заменяем каждое русское слово на его перевод
-      for (const [sourceWord, translation] of wordMap) {
-        const regex = new RegExp('(?<![а-яёa-z0-9_])' + escapeRegExp(sourceWord) + '(?![а-яёa-z0-9_])', 'gi');
-        parts[i] = parts[i].replace(regex, translation);
-      }
-    }
-
-    return parts.join('');
+    // Собираем результат
+    return resultSegments.map(s => s.content).join('');
   }
 
   function buildContentIndex(data) {
@@ -1167,7 +1185,7 @@
 
         let commentHtml = '';
         if (wtsComment) {
-          commentHtml += `<div class="wts-comment">📄 Из файла: ${escapeHtml(wtsComment)}</div>`;
+          commentHtml += `<div class="wts-comment"> Из файла: ${escapeHtml(wtsComment)}</div>`;
         }
         const showComments = userComments.slice(-5);
         if (showComments.length > 0) {
