@@ -746,18 +746,11 @@
 
   // Новая версия функции applyTranslationToMember с работой по сегментам между WTS-тегами
 function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
-  // 1. Применяем логику для идентификаторов (<A0HC,Level,3>)
+  // 1. Применяем логику для идентификаторов
   let processedTranslation = substituteIdentifiers(templateTranslation, sourceOriginal, targetOriginal);
 
-  // 2. Сохраняем placeholder'ы (%d, %s, %f) во временные маркеры
-  const placeholders = [];
-  processedTranslation = processedTranslation.replace(/%[dfs]/g, (match) => {
-    placeholders.push(match);
-    return `__PH_${placeholders.length - 1}__`;
-  });
-
-  // 3. Числовая подстановка (только если в переводе нет своих чисел)
-  const hasNumbersInTranslation = /\d/.test(processedTranslation.replace(/__PH_\d+__/g, ''));
+  // 2. Числовая подстановка (только если в переводе нет своих чисел)
+  const hasNumbersInTranslation = /\d/.test(processedTranslation);
   
   if (!hasNumbersInTranslation) {
     const numbers = extractNumbers(targetOriginal);
@@ -770,12 +763,7 @@ function applyTranslationToMember(templateTranslation, sourceOriginal, targetOri
     });
   }
 
-  // 4. Восстанавливаем placeholder'ы
-  processedTranslation = processedTranslation.replace(/__PH_(\d+)__/g, (match, idx) => {
-    return placeholders[parseInt(idx)];
-  });
-
-  // 5. Разбивка текста на сегменты (текст vs теги)
+  // 3. Разбивка текста на сегменты (текст vs теги)
   const splitByWtsTags = (text) => {
     const segments = [];
     const regex = /(\|c[0-9a-fA-F]{6,8}|\|r)/g;
@@ -801,7 +789,7 @@ function applyTranslationToMember(templateTranslation, sourceOriginal, targetOri
   const transSegments = splitByWtsTags(processedTranslation);
   const targetSegments = splitByWtsTags(targetOriginal);
 
-  // 6. Создаем маппинг текстовых сегментов по позициям
+  // 4. Создаем маппинг текстовых сегментов по позициям
   const sourceTextSegments = sourceSegments.filter(s => s.type === 'text');
   const transTextSegments = transSegments.filter(s => s.type === 'text');
   
@@ -810,7 +798,7 @@ function applyTranslationToMember(templateTranslation, sourceOriginal, targetOri
     segmentMap.set(sourceTextSegments[i].content, transTextSegments[i].content);
   }
 
-  // 7. Обрабатываем цель: заменяем русские слова в каждом текстовом сегменте
+  // 5. Обрабатываем цель: заменяем русские слова в каждом текстовом сегменте
   const resultSegments = targetSegments.map(segment => {
     if (segment.type !== 'text') return segment;
     
@@ -819,8 +807,8 @@ function applyTranslationToMember(templateTranslation, sourceOriginal, targetOri
     for (const [sourceText, transText] of segmentMap) {
       // Находим ТОЛЬКО русские слова в источнике
       const sourceWords = sourceText.match(/[а-яё]+/gi);
-      // Находим ТОЛЬКО буквенные слова в переводе (исключаем цифры и спецсимволы)
-      const transWords = transText.match(/[а-яёa-z]+/gi);
+      // Находим слова в переводе, ИСКЛЮЧАЯ %d, %s, %f
+      const transWords = transText.replace(/%[dfs]/g, '').match(/[а-яёa-z]+/gi);
       
       if (!sourceWords || sourceWords.length === 0) continue;
       if (!transWords || transWords.length === 0) continue;
@@ -858,7 +846,7 @@ function applyTranslationToMember(templateTranslation, sourceOriginal, targetOri
     return { type: 'text', content: text };
   });
 
-  // 8. Собираем итоговую строгу
+  // 6. Собираем итоговую строку
   return resultSegments.map(s => s.content).join('');
 }
 
