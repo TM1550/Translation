@@ -745,115 +745,117 @@
   }
 
   // Новая версия функции applyTranslationToMember с работой по сегментам между WTS-тегами
-  function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
-    // Сначала применяем существующую логику для идентификаторов
-    let processedTranslation = substituteIdentifiers(templateTranslation, sourceOriginal, targetOriginal);
+function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
+  // Сначала применяем существующую логику для идентификаторов
+  let processedTranslation = substituteIdentifiers(templateTranslation, sourceOriginal, targetOriginal);
 
-    // Применяем числовую подстановку только если в переводе ещё нет чисел
-    const hasNumbersInTranslation = /\d/.test(processedTranslation);
-    
-    if (!hasNumbersInTranslation) {
-      const numbers = extractNumbers(targetOriginal);
-      let index = 0;
-      processedTranslation = processedTranslation.replace(/\d+/g, function(match) {
-        if (index < numbers.length) {
-          return numbers[index++];
-        }
-        return match;
-      });
-    }
+  // Сохраняем placeholder'ы (%d, %s, %f) чтобы не потерять их
+  const placeholders = [];
+  processedTranslation = processedTranslation.replace(/%[dfs]/g, (match) => {
+    placeholders.push(match);
+    return `__PH_${placeholders.length - 1}__`;
+  });
 
-    // Функция для разбивки текста на сегменты между WTS-тегами
-    const splitByWtsTags = (text) => {
-      const segments = [];
-      const regex = /(\|c[0-9a-fA-F]{6,8}|\|r)/g;
-      let lastIndex = 0;
-      let match;
-      
-      while ((match = regex.exec(text)) !== null) {
-        // Добавляем текстовый сегмент перед тегом
-        if (match.index > lastIndex) {
-          segments.push({ type: 'text', content: text.slice(lastIndex, match.index) });
-        }
-        // Добавляем сам тег
-        segments.push({ type: 'tag', content: match[0] });
-        lastIndex = match.index + match[0].length;
+  // Применяем числовую подстановку только если в переводе ещё нет чисел
+  const hasNumbersInTranslation = /\d/.test(processedTranslation.replace(/__PH_\d+__/g, ''));
+  
+  if (!hasNumbersInTranslation) {
+    const numbers = extractNumbers(targetOriginal);
+    let index = 0;
+    processedTranslation = processedTranslation.replace(/\d+/g, function(match) {
+      if (index < numbers.length) {
+        return numbers[index++];
       }
-      
-      // Добавляем последний текстовый сегмент
-      if (lastIndex < text.length) {
-        segments.push({ type: 'text', content: text.slice(lastIndex) });
-      }
-      
-      return segments;
-    };
-
-    const sourceSegments = splitByWtsTags(sourceOriginal);
-    const transSegments = splitByWtsTags(processedTranslation);
-    const targetSegments = splitByWtsTags(targetOriginal);
-
-    // Создаём маппинг сегментов: текстовый сегмент источника -> текстовый сегмент перевода
-    // Сопоставляем по позициям (игнорируя теги)
-    const sourceTextSegments = sourceSegments.filter(s => s.type === 'text');
-    const transTextSegments = transSegments.filter(s => s.type === 'text');
-    
-    const segmentMap = new Map();
-    for (let i = 0; i < sourceTextSegments.length && i < transTextSegments.length; i++) {
-      segmentMap.set(sourceTextSegments[i].content, transTextSegments[i].content);
-    }
-
-    // Обрабатываем цель: для каждого текстового сегмента заменяем русские слова
-    const resultSegments = targetSegments.map(segment => {
-      if (segment.type !== 'text') return segment;
-      
-      let text = segment.content;
-      
-      // Для каждого маппинга сегментов
-      for (const [sourceText, transText] of segmentMap) {
-        // Находим русские слова в сегменте источника
-        const sourceWords = sourceText.match(/[а-яё]+/gi);
-        const transWords = transText.match(/[а-яёa-z0-9_]+/gi);
-        
-        if (!sourceWords || sourceWords.length === 0) continue;
-        
-        // Создаём маппинг слов внутри сегмента
-        const wordMap = new Map();
-        const numSourceWords = sourceWords.length;
-        const numTransWords = transWords ? transWords.length : 0;
-        
-        if (numTransWords === 0) continue;
-        
-        for (let i = 0; i < numSourceWords; i++) {
-          let transWord;
-          if (numTransWords >= numSourceWords) {
-            // Пропорциональное распределение
-            const startIdx = Math.floor(i * numTransWords / numSourceWords);
-            const endIdx = Math.floor((i + 1) * numTransWords / numSourceWords);
-            const words = [];
-            for (let j = startIdx; j < endIdx; j++) {
-              words.push(transWords[j]);
-            }
-            transWord = words.join(' ');
-          } else {
-            // Циклическое повторение
-            transWord = transWords[i % numTransWords];
-          }
-          wordMap.set(sourceWords[i].toLowerCase(), transWord);
-        }
-        
-        // Заменяем русские слова в текстовом сегменте
-        for (const [sourceWord, transWord] of wordMap) {
-          const regex = new RegExp('(?<![а-яёa-z0-9_])' + escapeRegExp(sourceWord) + '(?![а-яёa-z0-9_])', 'gi');
-          text = text.replace(regex, transWord);
-        }
-      }
-      
-      return { type: 'text', content: text };
+      return match;
     });
-
-    // Собираем результат
-    return resultSegments.map(s => s.content).join('');
   }
+
+  // Восстанавливаем placeholder'ы
+  processedTranslation = processedTranslation.replace(/__PH_(\d+)__/g, (match, idx) => {
+    return placeholders[parseInt(idx)];
+  });
+
+  // Функция для разбивки текста на сегменты между WTS-тегами
+  const splitByWtsTags = (text) => {
+    const segments = [];
+    const regex = /(\|c[0-9a-fA-F]{6,8}|\|r)/g;
+    let lastIndex = 0;
+    let match;
+    
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        segments.push({ type: 'text', content: text.slice(lastIndex, match.index) });
+      }
+      segments.push({ type: 'tag', content: match[0] });
+      lastIndex = match.index + match[0].length;
+    }
+    
+    if (lastIndex < text.length) {
+      segments.push({ type: 'text', content: text.slice(lastIndex) });
+    }
+    
+    return segments;
+  };
+
+  const sourceSegments = splitByWtsTags(sourceOriginal);
+  const transSegments = splitByWtsTags(processedTranslation);
+  const targetSegments = splitByWtsTags(targetOriginal);
+
+  // Создаём маппинг сегментов по позициям
+  const sourceTextSegments = sourceSegments.filter(s => s.type === 'text');
+  const transTextSegments = transSegments.filter(s => s.type === 'text');
+  
+  const segmentMap = new Map();
+  for (let i = 0; i < sourceTextSegments.length && i < transTextSegments.length; i++) {
+    segmentMap.set(sourceTextSegments[i].content, transTextSegments[i].content);
+  }
+
+  // Обрабатываем цель
+  const resultSegments = targetSegments.map(segment => {
+    if (segment.type !== 'text') return segment;
+    
+    let text = segment.content;
+    
+    for (const [sourceText, transText] of segmentMap) {
+      // Находим только русские слова в источнике
+      const sourceWords = sourceText.match(/[а-яё]+/gi);
+      // Находим только буквенные слова в переводе (без цифр и placeholder'ов)
+      const transWords = transText.match(/[а-яёa-z]+/gi);
+      
+      if (!sourceWords || sourceWords.length === 0) continue;
+      if (!transWords || transWords.length === 0) continue;
+      
+      const wordMap = new Map();
+      const numSourceWords = sourceWords.length;
+      const numTransWords = transWords.length;
+      
+      for (let i = 0; i < numSourceWords; i++) {
+        let transWord;
+        if (numTransWords >= numSourceWords) {
+          const startIdx = Math.floor(i * numTransWords / numSourceWords);
+          const endIdx = Math.floor((i + 1) * numTransWords / numSourceWords);
+          const words = [];
+          for (let j = startIdx; j < endIdx; j++) {
+            words.push(transWords[j]);
+          }
+          transWord = words.join(' ');
+        } else {
+          transWord = transWords[i % numTransWords];
+        }
+        wordMap.set(sourceWords[i].toLowerCase(), transWord);
+      }
+      
+      for (const [sourceWord, transWord] of wordMap) {
+        const regex = new RegExp('(?<![а-яёa-z0-9_])' + escapeRegExp(sourceWord) + '(?![а-яёa-z0-9_])', 'gi');
+        text = text.replace(regex, transWord);
+      }
+    }
+    
+    return { type: 'text', content: text };
+  });
+
+  return resultSegments.map(s => s.content).join('');
+}
 
   function buildContentIndex(data) {
     const index = new Map();
