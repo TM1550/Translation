@@ -388,7 +388,7 @@
     </label>
     <button class="export-btn" id="exportBtn" style="display:none;"> Скачать .wts</button>
 
-    <button class="db-download-btn" id="dbDownloadBtn" style="display:none;"> Скачать БД</button>
+    <button class="db-download-btn" id="dbDownloadBtn" style="display:none;">💾 Скачать БД</button>
     <button class="db-restore-btn" id="dbRestoreBtn" style="display:none;">📤 Восстановить БД</button>
     <input type="file" id="dbRestoreInput" accept=".json" style="display:none;">
 
@@ -444,7 +444,7 @@
   </div>
 
   <div class="status">
-    <span id="connectionStatus"> Подключение...</span>
+    <span id="connectionStatus">⏳ Подключение...</span>
     <span id="countStatus">0</span>
   </div>
 </div>
@@ -727,21 +727,6 @@
     return result;
   }
 
-  function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
-    let result = substituteIdentifiers(templateTranslation, sourceOriginal, targetOriginal);
-
-    const numbers = extractNumbers(targetOriginal);
-    let index = 0;
-    result = result.replace(/\d+/g, function(match) {
-      if (index < numbers.length) {
-        return numbers[index++];
-      }
-      return match;
-    });
-
-    return result;
-  }
-
   // Убирает только WTS-теги — используется для сравнения и группировки, не для отображения
   function cleanWtsText(text) {
     if (!text) return '';
@@ -757,6 +742,42 @@
 
   function normalizeForMatch(text) {
     return cleanWtsText(text || '').toLowerCase();
+  }
+
+  // Новая версия функции applyTranslationToMember с поддержкой WTS-тегов
+  function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
+    // Сначала применяем существующую логику для идентификаторов и чисел
+    let processedTranslation = substituteIdentifiers(templateTranslation, sourceOriginal, targetOriginal);
+
+    const numbers = extractNumbers(targetOriginal);
+    let index = 0;
+    processedTranslation = processedTranslation.replace(/\d+/g, function(match) {
+      if (index < numbers.length) {
+        return numbers[index++];
+      }
+      return match;
+    });
+
+    // Теперь заменяем слова из оригинала источника в оригинале цели, сохраняя WTS-теги
+    const cleanSource = cleanWtsText(sourceOriginal);
+
+    if (cleanSource.length === 0) return processedTranslation;
+
+    // Разбиваем оригинал цели на части по WTS-тегам
+    const parts = targetOriginal.split(/(\|c[0-9a-fA-F]{6,8}|\|r)/g);
+
+    // Создаём регулярное выражение с границами слов (для кириллицы и латиницы)
+    const regex = new RegExp('(?<![а-яёa-z0-9_])' + escapeRegExp(cleanSource) + '(?![а-яёa-z0-9_])', 'gi');
+
+    for (let i = 0; i < parts.length; i++) {
+      // Пропускаем WTS-теги
+      if (/^\|c[0-9a-fA-F]{6,8}$/.test(parts[i]) || parts[i] === '|r') continue;
+
+      // Заменяем вхождения cleanSource в текстовых частях
+      parts[i] = parts[i].replace(regex, processedTranslation);
+    }
+
+    return parts.join('');
   }
 
   function buildContentIndex(data) {
@@ -1085,7 +1106,7 @@
           inactiveButton = `<button class="${btnClass}" data-key="${safeKey}">${label}</button>`;
         }
 
-        const similarButton = `<button class="similar-btn" data-key="${safeKey}">🔍 Похожие</button>`;
+        const similarButton = `<button class="similar-btn" data-key="${safeKey}"> Похожие</button>`;
 
         let commentHtml = '';
         if (wtsComment) {
