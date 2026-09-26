@@ -673,29 +673,33 @@
     return str.replace(/\s+/g, ' ').trim();
   }
 
-  // ========== НОВАЯ ЛОГИКА ГРУППИРОВКИ ==========
-  
-  // Функция очистки для группировки - удаляет все технические элементы
-  function cleanForGrouping(text) {
-    if (!text) return '';
-    return text
-      .replace(/\|c[0-9a-fA-F]{6,8}/g, '')
-      .replace(/\|r/g, '')
-      .replace(/<[^>]+>/g, '')
-      .replace(/%[dfs]/g, '')
-      .replace(/\d+/g, '')
-      .replace(/[^\wа-яё]/gi, '')
-      .replace(/\s+/g, '')
-      .toLowerCase();
+  function normalizeOriginalForCompare(text) {
+    return cleanWtsText(text).toLowerCase();
   }
 
-  // Новая функция группировки
+  function normalizeForMatch(text) {
+    return cleanWtsText(text || '').toLowerCase();
+  }
+
+  function cleanWtsText(text) {
+    if (!text) return '';
+    let cleaned = text.replace(/\|c[0-9a-fA-F]{6,8}/g, '');
+    cleaned = cleaned.replace(/\|r/g, '');
+    cleaned = cleaned.replace(/\s+/g, ' ').trim();
+    return cleaned;
+  }
+
+  // ========== НОВАЯ ЛОГИКА ГРУППИРОВКИ ==========
+  
   function makePattern(str) {
-    const cleaned = cleanForGrouping(str);
-    if (cleaned.length > 0) {
-      return cleaned;
+    if (!str) return '__empty__';
+    // Извлекаем все непрерывные последовательности русских букв
+    const cyrillicWords = str.match(/[а-яё]+/gi);
+    if (!cyrillicWords || cyrillicWords.length === 0) {
+      return '__no_cyrillic__';
     }
-    return '__empty__';
+    // Собираем их в одну строку через пробел и приводим к нижнему регистру
+    return cyrillicWords.join(' ').toLowerCase();
   }
 
   function escapeRegExp(s) {
@@ -742,41 +746,31 @@
     return result;
   }
 
-  // Убирает только WTS-теги — используется для сравнения и группировки, не для отображения
-  function cleanWtsText(text) {
-    if (!text) return '';
-    let cleaned = text.replace(/\|c[0-9a-fA-F]{6,8}/g, '');
-    cleaned = cleaned.replace(/\|r/g, '');
-    cleaned = cleaned.replace(/\s+/g, ' ').trim();
-    return cleaned;
-  }
-
-  function normalizeOriginalForCompare(text) {
-    return cleanWtsText(text).toLowerCase();
-  }
-
-  function normalizeForMatch(text) {
-    return cleanWtsText(text || '').toLowerCase();
-  }
-
-  // НОВАЯ ФУНКЦИЯ АВТОПОДСТАНОВКИ - просто заменяет технические элементы по порядку
+  // НОВАЯ ФУНКЦИЯ АВТОПОДСТАНОВКИ
   function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
-    // Извлекаем технические элементы из перевода и цели
-    const techRegex = /\|c[0-9a-fA-F]{6,8}|\|r|<[^>]+>|%[dfs]|\d+/g;
+    if (!templateTranslation || templateTranslation.trim() === '') {
+      return ''; // Если перевод очищен, очищаем и у остальных
+    }
     
-    const transTechElements = templateTranslation.match(techRegex) || [];
-    const targetTechElements = targetOriginal.match(techRegex) || [];
+    // Извлекаем русские слова из перевода, который ввел пользователь
+    const transCyrillicWords = templateTranslation.match(/[а-яё]+/gi) || [];
+    let result = targetOriginal;
+    let wordIndex = 0;
     
-    // Заменяем технические элементы в переводе на соответствующие из цели
-    let result = templateTranslation;
-    let techIndex = 0;
-    
-    result = result.replace(techRegex, (match) => {
-      if (techIndex < targetTechElements.length) {
-        return targetTechElements[techIndex++];
+    // Заменяем русские слова в целевом оригинале на русские слова из перевода по порядку
+    result = result.replace(/[а-яё]+/gi, (match) => {
+      if (wordIndex < transCyrillicWords.length) {
+        return transCyrillicWords[wordIndex++];
       }
-      return match;
+      // Если в переводе слов меньше, чем в оригинале, оставляем оригинальное слово,
+      // чтобы не сломать структуру тегов/символов
+      return match; 
     });
+    
+    // Если в переводе слов больше, чем в оригинале, добавляем оставшиеся слова в конец
+    if (wordIndex < transCyrillicWords.length) {
+      result += ' ' + transCyrillicWords.slice(wordIndex).join(' ');
+    }
     
     return result;
   }
@@ -936,10 +930,10 @@
     if (!item) return;
 
     const newState = !item.inactive;
-    const targetNorm = normalizeOriginalForCompare(item.original);
+    const targetPattern = makePattern(item.original);
 
     const matchingKeys = allData
-      .filter(d => normalizeOriginalForCompare(d.original) === targetNorm)
+      .filter(d => makePattern(d.original) === targetPattern)
       .map(d => d.key);
 
     if (matchingKeys.length === 0) return;
