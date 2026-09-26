@@ -752,36 +752,37 @@ function applyTranslationToMember(templateTranslation, sourceOriginal, targetOri
         return '';
     }
     
-    // Шаг 1: Удаляем WTS-теги из перевода
+    // Шаг 1: Очищаем перевод от WTS-тегов и спецсимволов
     let cleanTranslation = templateTranslation;
-    cleanTranslation = cleanTranslation.replace(/\|c[0-9a-fA-F]{6,8}/g, ''); // удаляем |cRRGGBB или |cRRGGBBAA
-    cleanTranslation = cleanTranslation.replace(/\|r/g, ''); // удаляем |r
+    cleanTranslation = cleanTranslation.replace(/\|c[0-9a-fA-F]{6,8}/g, ' ');
+    cleanTranslation = cleanTranslation.replace(/\|r/g, ' ');
+    cleanTranslation = cleanTranslation.replace(/<[^>]*>/g, ' ');
+    cleanTranslation = cleanTranslation.replace(/%[dfs]/g, ' ');
+    cleanTranslation = cleanTranslation.replace(/\d+/g, ' ');
     
-    // Шаг 2: Извлекаем слова, игнорируя спецификаторы формата (%d, %s, %f)
-    const transWords = [];
-    const wordRegex = /[а-яёa-z]+/gi;
-    let match;
-    while ((match = wordRegex.exec(cleanTranslation)) !== null) {
-        // Проверяем, не preceded ли слово символом %
-        const beforeChar = cleanTranslation[match.index - 1];
-        if (beforeChar !== '%') {
-            transWords.push(match[0]);
-        }
+    // Шаг 2: Извлекаем английские слова из перевода
+    const englishWords = cleanTranslation.match(/[a-z]+/gi) || [];
+    
+    if (englishWords.length === 0) {
+        return targetOriginal;
     }
     
-    // Шаг 3: Заменяем русские слова в целевом оригинале на слова из перевода
+    // Шаг 3: Заменяем русские слова в целевом оригинале на английские слова из перевода
     let result = targetOriginal;
     let wordIndex = 0;
     
     result = result.replace(/[а-яё]+/gi, (match) => {
-        if (wordIndex < transWords.length) {
-            return transWords[wordIndex++];
+        if (wordIndex < englishWords.length) {
+            return englishWords[wordIndex++];
         }
         return match;
     });
     
-    // Не добавляем остаток, чтобы не дублировать текст в цели
-    // (если в переводе больше слов, чем русских слов в цели)
+    // Шаг 4: Если английских слов больше, добавляем остаток в конец
+    if (wordIndex < englishWords.length) {
+        const remaining = englishWords.slice(wordIndex).join(' ');
+        result += ' ' + remaining;
+    }
     
     return result;
 }
