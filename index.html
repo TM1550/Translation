@@ -752,14 +752,27 @@ function applyTranslationToMember(templateTranslation, sourceOriginal, targetOri
         return '';
     }
     
-    // Извлекаем все слова (и кириллицу, и латиницу) из перевода пользователя
-    const transWords = templateTranslation.match(/[а-яёa-z]+/gi) || [];
+    // Шаг 1: Удаляем WTS-теги из перевода
+    let cleanTranslation = templateTranslation;
+    cleanTranslation = cleanTranslation.replace(/\|c[0-9a-fA-F]{6,8}/g, ''); // удаляем |cRRGGBB или |cRRGGBBAA
+    cleanTranslation = cleanTranslation.replace(/\|r/g, ''); // удаляем |r
     
-    // Создаем результат на основе целевого оригинала
+    // Шаг 2: Извлекаем слова, игнорируя спецификаторы формата (%d, %s, %f)
+    const transWords = [];
+    const wordRegex = /[а-яёa-z]+/gi;
+    let match;
+    while ((match = wordRegex.exec(cleanTranslation)) !== null) {
+        // Проверяем, не preceded ли слово символом %
+        const beforeChar = cleanTranslation[match.index - 1];
+        if (beforeChar !== '%') {
+            transWords.push(match[0]);
+        }
+    }
+    
+    // Шаг 3: Заменяем русские слова в целевом оригинале на слова из перевода
     let result = targetOriginal;
     let wordIndex = 0;
     
-    // Заменяем ВСЕ слова (кириллические) в целевом оригинале на слова из перевода
     result = result.replace(/[а-яё]+/gi, (match) => {
         if (wordIndex < transWords.length) {
             return transWords[wordIndex++];
@@ -767,10 +780,8 @@ function applyTranslationToMember(templateTranslation, sourceOriginal, targetOri
         return match;
     });
     
-    // Если слов в переводе больше, добавляем остаток в конец
-    if (wordIndex < transWords.length) {
-        result += ' ' + transWords.slice(wordIndex).join(' ');
-    }
+    // Не добавляем остаток, чтобы не дублировать текст в цели
+    // (если в переводе больше слов, чем русских слов в цели)
     
     return result;
 }
