@@ -752,22 +752,18 @@ function applyTranslationToMember(templateTranslation, sourceOriginal, targetOri
         return '';
     }
     
-    // Шаг 1: Очищаем перевод от WTS-тегов и спецсимволов
+    // Шаг 1: Извлекаем английские слова из перевода референса
     let cleanTranslation = templateTranslation;
-    cleanTranslation = cleanTranslation.replace(/\|c[0-9a-fA-F]{6,8}/g, ' ');
-    cleanTranslation = cleanTranslation.replace(/\|r/g, ' ');
-    cleanTranslation = cleanTranslation.replace(/<[^>]*>/g, ' ');
-    cleanTranslation = cleanTranslation.replace(/%[dfs]/g, ' ');
-    cleanTranslation = cleanTranslation.replace(/\d+/g, ' ');
+    cleanTranslation = cleanTranslation.replace(/\|c[0-9a-fA-F]{6,8}/g, '');
+    cleanTranslation = cleanTranslation.replace(/\|r/g, '');
     
-    // Шаг 2: Извлекаем английские слова из перевода
     const englishWords = cleanTranslation.match(/[a-z]+/gi) || [];
     
     if (englishWords.length === 0) {
         return targetOriginal;
     }
     
-    // Шаг 3: Заменяем русские слова в целевом оригинале на английские слова из перевода
+    // Шаг 2: Заменяем русские слова в целевом оригинале на английские слова по порядку
     let result = targetOriginal;
     let wordIndex = 0;
     
@@ -777,12 +773,6 @@ function applyTranslationToMember(templateTranslation, sourceOriginal, targetOri
         }
         return match;
     });
-    
-    // Шаг 4: Если английских слов больше, добавляем остаток в конец
-    if (wordIndex < englishWords.length) {
-        const remaining = englishWords.slice(wordIndex).join(' ');
-        result += ' ' + remaining;
-    }
     
     return result;
 }
