@@ -747,33 +747,33 @@
   }
 
   // НОВАЯ ФУНКЦИЯ АВТОПОДСТАНОВКИ
-  function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
+function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
     if (!templateTranslation || templateTranslation.trim() === '') {
-      return ''; // Если перевод очищен, очищаем и у остальных
+        return '';
     }
     
-    // Извлекаем русские слова из перевода, который ввел пользователь
-    const transCyrillicWords = templateTranslation.match(/[а-яё]+/gi) || [];
+    // Извлекаем все слова (и кириллицу, и латиницу) из перевода пользователя
+    const transWords = templateTranslation.match(/[а-яёa-z]+/gi) || [];
+    
+    // Создаем результат на основе целевого оригинала
     let result = targetOriginal;
     let wordIndex = 0;
     
-    // Заменяем русские слова в целевом оригинале на русские слова из перевода по порядку
+    // Заменяем ВСЕ слова (кириллические) в целевом оригинале на слова из перевода
     result = result.replace(/[а-яё]+/gi, (match) => {
-      if (wordIndex < transCyrillicWords.length) {
-        return transCyrillicWords[wordIndex++];
-      }
-      // Если в переводе слов меньше, чем в оригинале, оставляем оригинальное слово,
-      // чтобы не сломать структуру тегов/символов
-      return match; 
+        if (wordIndex < transWords.length) {
+            return transWords[wordIndex++];
+        }
+        return match;
     });
     
-    // Если в переводе слов больше, чем в оригинале, добавляем оставшиеся слова в конец
-    if (wordIndex < transCyrillicWords.length) {
-      result += ' ' + transCyrillicWords.slice(wordIndex).join(' ');
+    // Если слов в переводе больше, добавляем остаток в конец
+    if (wordIndex < transWords.length) {
+        result += ' ' + transWords.slice(wordIndex).join(' ');
     }
     
     return result;
-  }
+}
 
   function buildContentIndex(data) {
     const index = new Map();
