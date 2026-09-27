@@ -371,7 +371,7 @@
   <div class="auth-bar" id="authBar">
     <span class="user-info" id="userInfo">Не авторизован</span>
     <span class="role-badge" id="roleBadge" style="display:none;"></span>
-    <span class="admin-badge" id="adminBadge" style="display:none;">️ Админ БД</span>
+    <span class="admin-badge" id="adminBadge" style="display:none;">🛡️ Админ БД</span>
     <button id="loginGoogleBtn">Войти через Google</button>
     <button id="setNameBtn" class="set-name-btn" style="display:none;">Задать имя</button>
     <button id="logoutBtn">Выйти</button>
@@ -388,8 +388,8 @@
     </label>
     <button class="export-btn" id="exportBtn" style="display:none;"> Скачать .wts</button>
 
-    <button class="db-download-btn" id="dbDownloadBtn" style="display:none;">💾 Скачать БД</button>
-    <button class="db-restore-btn" id="dbRestoreBtn" style="display:none;"> Восстановить БД</button>
+    <button class="db-download-btn" id="dbDownloadBtn" style="display:none;"> Скачать БД</button>
+    <button class="db-restore-btn" id="dbRestoreBtn" style="display:none;">📤 Восстановить БД</button>
     <input type="file" id="dbRestoreInput" accept=".json" style="display:none;">
 
     <div class="filter-group">
@@ -444,7 +444,7 @@
   </div>
 
   <div class="status">
-    <span id="connectionStatus">⏳ Подключение...</span>
+    <span id="connectionStatus"> Подключение...</span>
     <span id="countStatus">0</span>
   </div>
 </div>
@@ -673,14 +673,76 @@
     return str.replace(/\s+/g, ' ').trim();
   }
 
-  function normalizeOriginalForCompare(text) {
-    return cleanWtsText(text).toLowerCase();
+  // ========== ШАБЛОН ГРУППИРОВКИ ==========
+  function makePattern(str) {
+    if (!str) return '';
+    const cyrillic = str.toLowerCase().replace(/[^а-яё]/g, '');
+    if (cyrillic.length > 0) {
+      return cyrillic;
+    }
+    return '__nocy__' + normalizeText(str).toLowerCase();
   }
 
-  function normalizeForMatch(text) {
-    return cleanWtsText(text || '').toLowerCase();
+  function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  function substituteIdentifiers(translation, sourceOriginal, targetOriginal) {
+    const blockRe = /<[^>]*>/g;
+    const srcBlocks = sourceOriginal.match(blockRe) || [];
+    const tgtBlocks = targetOriginal.match(blockRe) || [];
+
+    if (srcBlocks.length === 0 || srcBlocks.length !== tgtBlocks.length) {
+      return translation;
+    }
+
+    const substitutions = new Map();
+
+    for (let i = 0; i < srcBlocks.length; i++) {
+      const s = srcBlocks[i];
+      const t = tgtBlocks[i];
+      if (s === t) continue;
+
+      const sParts = s.slice(1, -1).split(',');
+      const tParts = t.slice(1, -1).split(',');
+      if (sParts.length !== tParts.length) continue;
+
+      for (let j = 0; j < sParts.length; j++) {
+        const a = sParts[j].trim();
+        const b = tParts[j].trim();
+        if (a === b) continue;
+        if (/^[A-Za-z0-9_]+$/.test(a) && /^[A-Za-z0-9_]+$/.test(b)) {
+          substitutions.set(a, b);
+        }
+      }
+    }
+
+    if (substitutions.size === 0) return translation;
+
+    let result = translation;
+    for (const [from, to] of substitutions) {
+      const re = new RegExp('\\b' + escapeRegExp(from) + '\\b', 'g');
+      result = result.replace(re, to);
+    }
+    return result;
+  }
+
+  function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
+    let result = substituteIdentifiers(templateTranslation, sourceOriginal, targetOriginal);
+
+    const numbers = extractNumbers(targetOriginal);
+    let index = 0;
+    result = result.replace(/\d+/g, function(match) {
+      if (index < numbers.length) {
+        return numbers[index++];
+      }
+      return match;
+    });
+
+    return result;
+  }
+
+  // Убирает только WTS-теги — используется для сравнения и группировки, не для отображения
   function cleanWtsText(text) {
     if (!text) return '';
     let cleaned = text.replace(/\|c[0-9a-fA-F]{6,8}/g, '');
@@ -689,118 +751,12 @@
     return cleaned;
   }
 
-  // ========== ТОКЕНИЗАЦИЯ И ШАБЛОНЫ ==========
-
-  // Токены: цветовые коды |cXXXXXXXX, сброс |r, плейсхолдеры <...>, перевод строки.
-  // Всё остальное — обычный текст.
-  const TOKEN_RE = /(\|c[0-9A-Fa-f]{6,8}|\|r|<[^>]*>|\n)/g;
-  const DYNAMIC_TOKEN_TYPES = new Set(['color', 'ph']);
-  const PATTERN_SEP = '\x1F';
-
-  function tokenize(text) {
-    if (!text) return [];
-    const parts = text.split(TOKEN_RE);
-    return parts.filter(p => p !== '');
+  function normalizeOriginalForCompare(text) {
+    return cleanWtsText(text).toLowerCase();
   }
 
-  function tokenType(tok) {
-    if (/^\|c[0-9A-Fa-f]{6,8}$/.test(tok)) return 'color';
-    if (tok === '|r') return 'reset';
-    if (/^<[^>]*>$/.test(tok)) return 'ph';
-    if (tok === '\n') return 'nl';
-    return 'text';
-  }
-
-  // Шаблон структуры строки: цвета и плейсхолдеры заменяются на маркеры,
-  // обычный текст остаётся как есть. Строки с одинаковой структурой
-  // (отличаются только цветами/плейсхолдерами) получают одинаковый шаблон.
-  function makePattern(str) {
-    if (!str) return '__empty__';
-    const tokens = tokenize(str);
-    if (tokens.length === 0) return '__empty__';
-    return tokens.map(t => {
-      const type = tokenType(t);
-      if (type === 'color') return '|c*';
-      if (type === 'ph') return '<*>';
-      return t;
-    }).join(PATTERN_SEP);
-  }
-
-  // Параллельный шаблон: сопоставляет исходную строку и её перевод
-  // по позициям токенов. Динамические токены (цвета, плейсхолдеры)
-  // автоматически переносятся из нового источника в целевую строку.
-  class ParallelTemplate {
-    constructor(src, dst) {
-      this.srcTokens = tokenize(src);
-      this.dstTokens = tokenize(dst);
-      if (this.srcTokens.length === 0 || this.srcTokens.length !== this.dstTokens.length) {
-        throw new Error('ParallelTemplate: разное число токенов');
-      }
-      this.srcTypes = this.srcTokens.map(tokenType);
-      this.dstTypes = this.dstTokens.map(tokenType);
-      this.dynamicSrc = this.srcTypes.map(t => DYNAMIC_TOKEN_TYPES.has(t));
-      this.dynamicDst = this.dstTypes.map(t => DYNAMIC_TOKEN_TYPES.has(t));
-      for (let i = 0; i < this.srcTypes.length; i++) {
-        if (this.dynamicSrc[i] && this.srcTypes[i] !== this.dstTypes[i]) {
-          throw new Error('ParallelTemplate: тип динамического токена не совпал в позиции ' + i);
-        }
-      }
-    }
-
-    translate(newSrc) {
-      const toks = tokenize(newSrc);
-      if (toks.length !== this.srcTokens.length) {
-        throw new Error('ParallelTemplate: разное число токенов в новом источнике');
-      }
-      const out = [];
-      for (let i = 0; i < this.dstTokens.length; i++) {
-        if (this.dynamicDst[i]) {
-          out.push(toks[i]); // подставляем цвет/плейсхолдер из нового оригинала
-        } else {
-          out.push(this.dstTokens[i]); // оставляем литерал из шаблона перевода
-        }
-      }
-      return out.join('');
-    }
-  }
-
-  // АВТОПОДСТАНОВКА: переносит перевод с одного члена группы на другого,
-  // заменяя динамические части (цвета, плейсхолдеры) значениями из
-  // целевого оригинала. Если структура токенов не совпадает —
-  // откатываемся на старый алгоритм подстановки по словам.
-  function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
-    if (!templateTranslation || templateTranslation.trim() === '') {
-      return '';
-    }
-
-    // Основной путь: параллельный шаблон по токенам
-    try {
-      const tpl = new ParallelTemplate(sourceOriginal, templateTranslation);
-      return tpl.translate(targetOriginal);
-    } catch (err) {
-      // структура не совпала — используем fallback
-    }
-
-    // Fallback: заменяем русские слова в целевом оригинале
-    // английскими словами из перевода по порядку.
-    let cleanTranslation = templateTranslation;
-    cleanTranslation = cleanTranslation.replace(/\|c[0-9a-fA-F]{6,8}/g, '');
-    cleanTranslation = cleanTranslation.replace(/\|r/g, '');
-
-    const englishWords = cleanTranslation.match(/[a-z]+/gi) || [];
-    if (englishWords.length === 0) {
-      return targetOriginal;
-    }
-
-    let result = targetOriginal;
-    let wordIndex = 0;
-    result = result.replace(/[а-яё]+/gi, (match) => {
-      if (wordIndex < englishWords.length) {
-        return englishWords[wordIndex++];
-      }
-      return match;
-    });
-    return result;
+  function normalizeForMatch(text) {
+    return cleanWtsText(text || '').toLowerCase();
   }
 
   function buildContentIndex(data) {
@@ -958,10 +914,10 @@
     if (!item) return;
 
     const newState = !item.inactive;
-    const targetPattern = makePattern(item.original);
+    const targetNorm = normalizeOriginalForCompare(item.original);
 
     const matchingKeys = allData
-      .filter(d => makePattern(d.original) === targetPattern)
+      .filter(d => normalizeOriginalForCompare(d.original) === targetNorm)
       .map(d => d.key);
 
     if (matchingKeys.length === 0) return;
@@ -1129,11 +1085,11 @@
           inactiveButton = `<button class="${btnClass}" data-key="${safeKey}">${label}</button>`;
         }
 
-        const similarButton = `<button class="similar-btn" data-key="${safeKey}"> Похожие</button>`;
+        const similarButton = `<button class="similar-btn" data-key="${safeKey}">🔍 Похожие</button>`;
 
         let commentHtml = '';
         if (wtsComment) {
-          commentHtml += `<div class="wts-comment"> Из файла: ${escapeHtml(wtsComment)}</div>`;
+          commentHtml += `<div class="wts-comment">📄 Из файла: ${escapeHtml(wtsComment)}</div>`;
         }
         const showComments = userComments.slice(-5);
         if (showComments.length > 0) {
