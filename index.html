@@ -689,93 +689,119 @@
     return cleaned;
   }
 
-  // ========== НОВАЯ ЛОГИКА ГРУППИРОВКИ ==========
-  
+  // ========== ТОКЕНИЗАЦИЯ И ШАБЛОНЫ ==========
+
+  // Токены: цветовые коды |cXXXXXXXX, сброс |r, плейсхолдеры <...>, перевод строки.
+  // Всё остальное — обычный текст.
+  const TOKEN_RE = /(\|c[0-9A-Fa-f]{6,8}|\|r|<[^>]*>|\n)/g;
+  const DYNAMIC_TOKEN_TYPES = new Set(['color', 'ph']);
+  const PATTERN_SEP = '\x1F';
+
+  function tokenize(text) {
+    if (!text) return [];
+    const parts = text.split(TOKEN_RE);
+    return parts.filter(p => p !== '');
+  }
+
+  function tokenType(tok) {
+    if (/^\|c[0-9A-Fa-f]{6,8}$/.test(tok)) return 'color';
+    if (tok === '|r') return 'reset';
+    if (/^<[^>]*>$/.test(tok)) return 'ph';
+    if (tok === '\n') return 'nl';
+    return 'text';
+  }
+
+  // Шаблон структуры строки: цвета и плейсхолдеры заменяются на маркеры,
+  // обычный текст остаётся как есть. Строки с одинаковой структурой
+  // (отличаются только цветами/плейсхолдерами) получают одинаковый шаблон.
   function makePattern(str) {
     if (!str) return '__empty__';
-    // Извлекаем все непрерывные последовательности русских букв
-    const cyrillicWords = str.match(/[а-яё]+/gi);
-    if (!cyrillicWords || cyrillicWords.length === 0) {
-      return '__no_cyrillic__';
-    }
-    // Собираем их в одну строку через пробел и приводим к нижнему регистру
-    return cyrillicWords.join(' ').toLowerCase();
+    const tokens = tokenize(str);
+    if (tokens.length === 0) return '__empty__';
+    return tokens.map(t => {
+      const type = tokenType(t);
+      if (type === 'color') return '|c*';
+      if (type === 'ph') return '<*>';
+      return t;
+    }).join(PATTERN_SEP);
   }
 
-  function escapeRegExp(s) {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
-
-  function substituteIdentifiers(translation, sourceOriginal, targetOriginal) {
-    const blockRe = /<[^>]*>/g;
-    const srcBlocks = sourceOriginal.match(blockRe) || [];
-    const tgtBlocks = targetOriginal.match(blockRe) || [];
-
-    if (srcBlocks.length === 0 || srcBlocks.length !== tgtBlocks.length) {
-      return translation;
-    }
-
-    const substitutions = new Map();
-
-    for (let i = 0; i < srcBlocks.length; i++) {
-      const s = srcBlocks[i];
-      const t = tgtBlocks[i];
-      if (s === t) continue;
-
-      const sParts = s.slice(1, -1).split(',');
-      const tParts = t.slice(1, -1).split(',');
-      if (sParts.length !== tParts.length) continue;
-
-      for (let j = 0; j < sParts.length; j++) {
-        const a = sParts[j].trim();
-        const b = tParts[j].trim();
-        if (a === b) continue;
-        if (/^[A-Za-z0-9_]+$/.test(a) && /^[A-Za-z0-9_]+$/.test(b)) {
-          substitutions.set(a, b);
+  // Параллельный шаблон: сопоставляет исходную строку и её перевод
+  // по позициям токенов. Динамические токены (цвета, плейсхолдеры)
+  // автоматически переносятся из нового источника в целевую строку.
+  class ParallelTemplate {
+    constructor(src, dst) {
+      this.srcTokens = tokenize(src);
+      this.dstTokens = tokenize(dst);
+      if (this.srcTokens.length === 0 || this.srcTokens.length !== this.dstTokens.length) {
+        throw new Error('ParallelTemplate: разное число токенов');
+      }
+      this.srcTypes = this.srcTokens.map(tokenType);
+      this.dstTypes = this.dstTokens.map(tokenType);
+      this.dynamicSrc = this.srcTypes.map(t => DYNAMIC_TOKEN_TYPES.has(t));
+      this.dynamicDst = this.dstTypes.map(t => DYNAMIC_TOKEN_TYPES.has(t));
+      for (let i = 0; i < this.srcTypes.length; i++) {
+        if (this.dynamicSrc[i] && this.srcTypes[i] !== this.dstTypes[i]) {
+          throw new Error('ParallelTemplate: тип динамического токена не совпал в позиции ' + i);
         }
       }
     }
 
-    if (substitutions.size === 0) return translation;
-
-    let result = translation;
-    for (const [from, to] of substitutions) {
-      const re = new RegExp('\\b' + escapeRegExp(from) + '\\b', 'g');
-      result = result.replace(re, to);
+    translate(newSrc) {
+      const toks = tokenize(newSrc);
+      if (toks.length !== this.srcTokens.length) {
+        throw new Error('ParallelTemplate: разное число токенов в новом источнике');
+      }
+      const out = [];
+      for (let i = 0; i < this.dstTokens.length; i++) {
+        if (this.dynamicDst[i]) {
+          out.push(toks[i]); // подставляем цвет/плейсхолдер из нового оригинала
+        } else {
+          out.push(this.dstTokens[i]); // оставляем литерал из шаблона перевода
+        }
+      }
+      return out.join('');
     }
-    return result;
   }
 
-  // НОВАЯ ФУНКЦИЯ АВТОПОДСТАНОВКИ
-function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
+  // АВТОПОДСТАНОВКА: переносит перевод с одного члена группы на другого,
+  // заменяя динамические части (цвета, плейсхолдеры) значениями из
+  // целевого оригинала. Если структура токенов не совпадает —
+  // откатываемся на старый алгоритм подстановки по словам.
+  function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
     if (!templateTranslation || templateTranslation.trim() === '') {
-        return '';
+      return '';
     }
-    
-    // Шаг 1: Извлекаем английские слова из перевода референса
+
+    // Основной путь: параллельный шаблон по токенам
+    try {
+      const tpl = new ParallelTemplate(sourceOriginal, templateTranslation);
+      return tpl.translate(targetOriginal);
+    } catch (err) {
+      // структура не совпала — используем fallback
+    }
+
+    // Fallback: заменяем русские слова в целевом оригинале
+    // английскими словами из перевода по порядку.
     let cleanTranslation = templateTranslation;
     cleanTranslation = cleanTranslation.replace(/\|c[0-9a-fA-F]{6,8}/g, '');
     cleanTranslation = cleanTranslation.replace(/\|r/g, '');
-    
+
     const englishWords = cleanTranslation.match(/[a-z]+/gi) || [];
-    
     if (englishWords.length === 0) {
-        return targetOriginal;
+      return targetOriginal;
     }
-    
-    // Шаг 2: Заменяем русские слова в целевом оригинале на английские слова по порядку
+
     let result = targetOriginal;
     let wordIndex = 0;
-    
     result = result.replace(/[а-яё]+/gi, (match) => {
-        if (wordIndex < englishWords.length) {
-            return englishWords[wordIndex++];
-        }
-        return match;
+      if (wordIndex < englishWords.length) {
+        return englishWords[wordIndex++];
+      }
+      return match;
     });
-    
     return result;
-}
+  }
 
   function buildContentIndex(data) {
     const index = new Map();
