@@ -379,16 +379,16 @@
 
   <div class="toolbar">
     <button id="refreshBtn">🔄 Обновить</button>
-    <button class="import-btn" id="importBtn" style="display:none;"> Загрузить .wts</button>
+    <button class="import-btn" id="importBtn" style="display:none;">📂 Загрузить .wts</button>
     <input type="file" id="fileInput" accept=".wts">
     <button class="import-translations-wts-btn" id="importTranslationsWtsBtn" style="display:none;">📥 Загрузить переводы .wts</button>
     <input type="file" id="translationsWtsInput" accept=".wts" style="display:none;">
     <label style="display:inline-flex;align-items:center;gap:4px;font-size:14px;background:#e0f2f1;padding:4px 12px;border-radius:20px;cursor:pointer;" title="Если отмечено — загруженные переводы будут помечены как подтверждённые">
       <input type="checkbox" id="confirmImportedTranslations"> Подтвердить импорт
     </label>
-    <button class="export-btn" id="exportBtn" style="display:none;"> Скачать .wts</button>
+    <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts</button>
 
-    <button class="db-download-btn" id="dbDownloadBtn" style="display:none;"> Скачать БД</button>
+    <button class="db-download-btn" id="dbDownloadBtn" style="display:none;">💾 Скачать БД</button>
     <button class="db-restore-btn" id="dbRestoreBtn" style="display:none;">📤 Восстановить БД</button>
     <input type="file" id="dbRestoreInput" accept=".json" style="display:none;">
 
@@ -403,7 +403,7 @@
     </div>
 
     <div class="search-group">
-      <input type="text" id="searchInput" placeholder=" Поиск по фразе, переводу или комментарию">
+      <input type="text" id="searchInput" placeholder="🔍 Поиск по фразе, переводу или комментарию">
     </div>
 
     <div class="pagination">
@@ -444,7 +444,7 @@
   </div>
 
   <div class="status">
-    <span id="connectionStatus"> Подключение...</span>
+    <span id="connectionStatus">⏳ Подключение...</span>
     <span id="countStatus">0</span>
   </div>
 </div>
@@ -525,7 +525,6 @@
   let lastImportStructure = [];
 
   // ========== АВТОРИЗАЦИЯ ==========
-
   function isAuthSupported() {
     try {
       localStorage.setItem('test', 'test');
@@ -533,9 +532,7 @@
       return window.location.protocol === 'http:' ||
              window.location.protocol === 'https:' ||
              window.location.protocol === 'chrome-extension:';
-    } catch (e) {
-      return false;
-    }
+    } catch (e) { return false; }
   }
 
   function updateAuthUI(user) {
@@ -643,7 +640,6 @@
   auth.onAuthStateChanged(user => { updateAuthUI(user); });
 
   // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
-
   function getCurrentUserInfo() {
     if (currentUser) {
       return { uid: currentUser.uid, displayName: currentDisplayName, role: currentUserRole, canManageDb: currentUserCanManageDb };
@@ -652,6 +648,7 @@
   }
 
   function hasRussian(text) { return /[а-яё]/i.test(text); }
+
   function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
@@ -673,76 +670,26 @@
     return str.replace(/\s+/g, ' ').trim();
   }
 
-  // ========== ШАБЛОН ГРУППИРОВКИ ==========
+  // ========== ГРУППИРОВКА (из первого файла) ==========
+  // Шаблон — заменяем все числа на '#'.
   function makePattern(str) {
-    if (!str) return '';
-    const cyrillic = str.toLowerCase().replace(/[^а-яё]/g, '');
-    if (cyrillic.length > 0) {
-      return cyrillic;
-    }
-    return '__nocy__' + normalizeText(str).toLowerCase();
+    return normalizeText(str).replace(/\d+/g, '#');
   }
 
-  function escapeRegExp(s) {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
-
-  function substituteIdentifiers(translation, sourceOriginal, targetOriginal) {
-    const blockRe = /<[^>]*>/g;
-    const srcBlocks = sourceOriginal.match(blockRe) || [];
-    const tgtBlocks = targetOriginal.match(blockRe) || [];
-
-    if (srcBlocks.length === 0 || srcBlocks.length !== tgtBlocks.length) {
-      return translation;
-    }
-
-    const substitutions = new Map();
-
-    for (let i = 0; i < srcBlocks.length; i++) {
-      const s = srcBlocks[i];
-      const t = tgtBlocks[i];
-      if (s === t) continue;
-
-      const sParts = s.slice(1, -1).split(',');
-      const tParts = t.slice(1, -1).split(',');
-      if (sParts.length !== tParts.length) continue;
-
-      for (let j = 0; j < sParts.length; j++) {
-        const a = sParts[j].trim();
-        const b = tParts[j].trim();
-        if (a === b) continue;
-        if (/^[A-Za-z0-9_]+$/.test(a) && /^[A-Za-z0-9_]+$/.test(b)) {
-          substitutions.set(a, b);
-        }
-      }
-    }
-
-    if (substitutions.size === 0) return translation;
-
-    let result = translation;
-    for (const [from, to] of substitutions) {
-      const re = new RegExp('\\b' + escapeRegExp(from) + '\\b', 'g');
-      result = result.replace(re, to);
-    }
-    return result;
-  }
-
-  function applyTranslationToMember(templateTranslation, sourceOriginal, targetOriginal) {
-    let result = substituteIdentifiers(templateTranslation, sourceOriginal, targetOriginal);
-
-    const numbers = extractNumbers(targetOriginal);
+  // Автоподстановка (из первого файла): заменяем числа в шаблонном переводе
+  // числами из оригинала целевой строки по порядку.
+  function applyTranslationToMember(templateTranslation, original) {
+    const numbers = extractNumbers(original);
     let index = 0;
-    result = result.replace(/\d+/g, function(match) {
+    return templateTranslation.replace(/\d+/g, function(match) {
       if (index < numbers.length) {
         return numbers[index++];
       }
       return match;
     });
-
-    return result;
   }
 
-  // Убирает только WTS-теги — используется для сравнения и группировки, не для отображения
+  // Убирает WTS-теги — используется для сравнения и поиска.
   function cleanWtsText(text) {
     if (!text) return '';
     let cleaned = text.replace(/\|c[0-9a-fA-F]{6,8}/g, '');
@@ -784,6 +731,7 @@
     return groups;
   }
 
+  // ========== ФИЛЬТРАЦИЯ ==========
   function getFilteredData() {
     let filtered = allData;
 
@@ -851,6 +799,7 @@
     textarea.style.height = textarea.scrollHeight + 'px';
   }
 
+  // ========== СОХРАНЕНИЕ ПЕРЕВОДА ==========
   function saveTranslation(key, newTranslation) {
     const item = allData.find(d => d.key === key);
     if (!item) return;
@@ -884,7 +833,8 @@
           if (member.key === key) {
             memberTranslation = newTranslation;
           } else {
-            memberTranslation = applyTranslationToMember(newTranslation, item.original, member.original);
+            // автоподстановка из первого файла
+            memberTranslation = applyTranslationToMember(newTranslation, member.original);
           }
           const localItem = allData.find(d => d.key === member.key);
           if (localItem) {
@@ -909,6 +859,7 @@
     stringsRef.child(key).update(updateData).catch(err => alert('Ошибка сохранения: ' + err.message));
   }
 
+  // ========== НЕАКТИВНОСТЬ ==========
   function toggleInactive(key) {
     const item = allData.find(d => d.key === key);
     if (!item) return;
@@ -937,12 +888,12 @@
       .catch(err => alert('Ошибка обновления статуса: ' + err.message));
   }
 
+  // ========== ПОХОЖИЕ ПОДТВЕРЖДЁННЫЕ ==========
   function findSimilarConfirmedTranslations(original, excludeKey, maxResults = 5) {
     const words = text => text.toLowerCase().replace(/[^a-zа-яё\s]/g, '').split(/\s+/).filter(w => w.length > 2);
     const currentWords = words(original);
     if (currentWords.length === 0) return [];
     const results = [];
-
     const currentNormalized = normalizeOriginalForCompare(original);
 
     for (const entry of allData) {
@@ -1026,12 +977,8 @@
       const filteredCount = getFilteredData().length;
       const searchTerm = searchInput.value.trim();
       let statsText = `Всего: ${totalAll} | Отфильтровано: ${filteredCount} | Показано: ${totalDisplay}`;
-      if (filterByImported.checked && importedNumbers.length > 0) {
-        statsText += ` (только загруженные)`;
-      }
-      if (searchTerm !== '') {
-        statsText += ` | Поиск: "${searchTerm}"`;
-      }
+      if (filterByImported.checked && importedNumbers.length > 0) statsText += ` (только загруженные)`;
+      if (searchTerm !== '') statsText += ` | Поиск: "${searchTerm}"`;
       statsSpan.textContent = statsText;
 
       if (totalDisplay === 0) {
@@ -1053,6 +1000,7 @@
         const confirmedByName = item.confirmedByName || '';
         const inactive = item.inactive || false;
         const safeKey = key.replace(/"/g, '&quot;');
+
         let groupInfo = '';
         if (groupMode.checked && item._groupMembers && item._groupMembers.length > 1) {
           const members = item._groupMembers;
@@ -1060,7 +1008,7 @@
           groupInfo = `Группа (${members.length} шт: #${keys})`;
         }
 
-        let translationAuthorDisplay = translationAuthorName ? `✍️ ${escapeHtml(translationAuthorName)}` : '';
+        const translationAuthorDisplay = translationAuthorName ? `✍️ ${escapeHtml(translationAuthorName)}` : '';
         let confirmedDisplay = '';
         let confirmButton = '';
         if (user.role === 'editor') {
@@ -1114,6 +1062,7 @@
         if (inactive) entryClasses += ' inactive';
         if (groupMode.checked && item._groupMembers && item._groupMembers.length > 1) entryClasses += ' group-header';
 
+        // Безопасное кодирование JSON группы (фича из второго файла)
         const groupDataEncoded = item._groupMembers ? encodeURIComponent(JSON.stringify(item._groupMembers)) : '';
 
         const leftColHtml = `
@@ -1161,27 +1110,22 @@
         textarea.removeEventListener('keydown', handleTextareaKeydown);
         textarea.addEventListener('keydown', handleTextareaKeydown);
       });
-
       container.querySelectorAll('.save-translation-btn').forEach(btn => {
         btn.removeEventListener('click', handleSaveTranslation);
         btn.addEventListener('click', handleSaveTranslation);
       });
-
       container.querySelectorAll('.comment-save-btn').forEach(btn => {
         btn.removeEventListener('click', handleCommentSave);
         btn.addEventListener('click', handleCommentSave);
       });
-
       container.querySelectorAll('.confirm-btn').forEach(btn => {
         btn.removeEventListener('click', handleConfirmToggle);
         btn.addEventListener('click', handleConfirmToggle);
       });
-
       container.querySelectorAll('.inactive-btn').forEach(btn => {
         btn.removeEventListener('click', handleInactiveToggle);
         btn.addEventListener('click', handleInactiveToggle);
       });
-
       container.querySelectorAll('.similar-btn').forEach(btn => {
         btn.removeEventListener('click', handleSimilar);
         btn.addEventListener('click', handleSimilar);
@@ -1210,13 +1154,9 @@
     }
   }
 
-  function handleInactiveToggle(e) {
-    toggleInactive(e.currentTarget.dataset.key);
-  }
+  function handleInactiveToggle(e) { toggleInactive(e.currentTarget.dataset.key); }
 
-  function handleSimilar(e) {
-    showSimilarTranslations(e.currentTarget.dataset.key);
-  }
+  function handleSimilar(e) { showSimilarTranslations(e.currentTarget.dataset.key); }
 
   function handleCommentSave(e) {
     const btn = e.currentTarget;
@@ -1224,10 +1164,8 @@
     const entry = btn.closest('.entry');
     const input = entry.querySelector('.comment-input');
     const commentText = input.value.trim();
-    if (commentText === '') {
-      alert('Комментарий не может быть пустым.');
-      return;
-    }
+    if (commentText === '') { alert('Комментарий не может быть пустым.'); return; }
+
     const user = getCurrentUserInfo();
     const newComment = {
       author: user.uid,
@@ -1255,6 +1193,7 @@
     if (!item) return;
     const comments = item.userComments || [];
     if (comments.length === 0) return;
+
     modalKeySpan.textContent = key;
     modalTitle.textContent = `Комментарии к фразе #${key}`;
     let listHtml = '';
@@ -1332,6 +1271,7 @@
     return entries;
   }
 
+  // ========== ИМПОРТ ОРИГИНАЛОВ ==========
   function importWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1406,9 +1346,7 @@
             nextId = nid + 1;
           }
 
-          const existingInactive = existing
-            ? (existing.inactive || false)
-            : (inactiveByContent.get(c) || false);
+          const existingInactive = existing ? (existing.inactive || false) : (inactiveByContent.get(c) || false);
           const inactiveFinal = inactiveByContent.get(c) || existingInactive;
 
           finalMap.set(targetKey, {
@@ -1481,11 +1419,12 @@
   }
 
   importBtn.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', function(e) {
+  fileInput.addEventListener('change', function() {
     if (this.files && this.files[0]) importWTS(this.files[0]);
     this.value = '';
   });
 
+  // ========== ИМПОРТ ПЕРЕВОДОВ ==========
   function importTranslationsFromWTS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -1589,11 +1528,12 @@
   }
 
   importTranslationsWtsBtn.addEventListener('click', () => translationsWtsInput.click());
-  translationsWtsInput.addEventListener('change', function(e) {
+  translationsWtsInput.addEventListener('change', function() {
     if (this.files && this.files[0]) importTranslationsFromWTS(this.files[0]);
     this.value = '';
   });
 
+  // ========== ЭКСПОРТ ==========
   function generateWTSFromStructure(data, structure) {
     const index = buildContentIndex(data);
     let output = '';
@@ -1645,12 +1585,10 @@
 
   exportBtn.addEventListener('click', exportWTS);
 
+  // ========== СКАЧИВАНИЕ БД ==========
   function downloadDatabase() {
     const user = getCurrentUserInfo();
-    if (!user.canManageDb) {
-      alert('У вас нет прав на скачивание базы данных.');
-      return;
-    }
+    if (!user.canManageDb) { alert('У вас нет прав на скачивание базы данных.'); return; }
     Promise.all([stringsRef.once('value'), metadataRef.once('value')])
       .then(([stringsSnap, metadataSnap]) => {
         const stringsData = stringsSnap.val() || {};
@@ -1685,15 +1623,12 @@
         alert('Ошибка скачивания базы данных: ' + err.message);
       });
   }
-
   dbDownloadBtn.addEventListener('click', downloadDatabase);
 
+  // ========== ВОССТАНОВЛЕНИЕ БД ==========
   function restoreDatabase(file) {
     const user = getCurrentUserInfo();
-    if (!user.canManageDb) {
-      alert('У вас нет прав на восстановление базы данных.');
-      return;
-    }
+    if (!user.canManageDb) { alert('У вас нет прав на восстановление базы данных.'); return; }
     const reader = new FileReader();
     reader.onload = function(e) {
       try {
@@ -1701,10 +1636,7 @@
         let backup;
         try { backup = JSON.parse(text); }
         catch (parseErr) { alert('Файл не является корректным JSON.'); return; }
-        if (!backup || typeof backup !== 'object') {
-          alert('Неверный формат файла бэкапа.');
-          return;
-        }
+        if (!backup || typeof backup !== 'object') { alert('Неверный формат файла бэкапа.'); return; }
         const stringsData = backup.strings || {};
         const metadataData = backup.metadata || {};
         const stringsCount = Object.keys(stringsData).length;
@@ -1713,20 +1645,15 @@
           return;
         }
         const meta = backup._meta || {};
-        const exportedInfo = meta.exportedAt
-          ? `\nДата экспорта: ${new Date(meta.exportedAt).toLocaleString('ru-RU')}` : '';
-        const authorInfo = meta.exportedBy && meta.exportedBy.displayName
-          ? `\nЭкспортировал: ${meta.exportedBy.displayName}` : '';
+        const exportedInfo = meta.exportedAt ? `\nДата экспорта: ${new Date(meta.exportedAt).toLocaleString('ru-RU')}` : '';
+        const authorInfo = meta.exportedBy && meta.exportedBy.displayName ? `\nЭкспортировал: ${meta.exportedBy.displayName}` : '';
         if (!confirm(
           `ВНИМАНИЕ! Восстановление базы данных ПОЛНОСТЬЮ ЗАМЕНИТ текущее содержимое.\n\n` +
           `В файле: ${stringsCount} фраз.${exportedInfo}${authorInfo}\n\n` +
           `Текущее содержимое будет безвозвратно удалено. Продолжить?`
         )) return;
         const code = prompt('Для подтверждения введите слово "ВОССТАНОВИТЬ" (без кавычек):');
-        if (code !== 'ВОССТАНОВИТЬ') {
-          alert('Операция отменена. Код не совпадает.');
-          return;
-        }
+        if (code !== 'ВОССТАНОВИТЬ') { alert('Операция отменена. Код не совпадает.'); return; }
         if (!confirm('Последний шанс! Заменить всю базу данных содержимым файла?')) return;
         stringsRef.set(stringsData)
           .then(() => metadataRef.set(metadataData))
@@ -1750,11 +1677,12 @@
   }
 
   dbRestoreBtn.addEventListener('click', () => dbRestoreInput.click());
-  dbRestoreInput.addEventListener('change', function(e) {
+  dbRestoreInput.addEventListener('change', function() {
     if (this.files && this.files[0]) restoreDatabase(this.files[0]);
     this.value = '';
   });
 
+  // ========== ПАГИНАЦИЯ ==========
   function goToPage(page) {
     const displayItems = getDisplayItems();
     const totalPages = itemsPerPage === 0 ? 1 : Math.ceil(displayItems.length / itemsPerPage);
@@ -1801,6 +1729,7 @@
 
   refreshBtn.addEventListener('click', () => { stringsRef.once('value', () => render()); });
 
+  // ========== МЕТАДАННЫЕ ==========
   metadataRef.on('value', (snapshot) => {
     const data = snapshot.val();
     if (data && data.importedNumbers) {
@@ -1820,17 +1749,15 @@
     }
   });
 
-  // ========== СЛУШАЕМ ИЗМЕНЕНИЯ В БАЗЕ ==========
+  // ========== ДАННЫЕ ==========
   stringsRef.on('value', (snapshot) => {
     const data = snapshot.val();
     if (!data) { allData = []; render(); return; }
     const entries = Object.entries(data).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
-    
     allData = entries.map(([key, entry]) => {
       let wtsComment = entry.wtsComment || '';
       let userComments = entry.userComments || [];
       if (entry.comment && !wtsComment) wtsComment = entry.comment;
-
       return {
         key,
         original: entry.original || '',
@@ -1848,6 +1775,7 @@
     render();
   });
 
+  // ========== ПОДКЛЮЧЕНИЕ ==========
   const connectedRef = firebase.database().ref('.info/connected');
   connectedRef.on('value', (snap) => {
     if (snap.val()) {
