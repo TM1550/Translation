@@ -661,27 +661,35 @@
     return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
-  function extractNumbers(str) {
-    const matches = str.match(/\d+/g);
-    return matches ? matches.map(Number) : [];
-  }
-
   function normalizeText(str) {
     return str.replace(/\s+/g, ' ').trim();
   }
 
-  // ========== ГРУППИРОВКА (из первого файла) ==========
-  // Шаблон — заменяем все числа на '#'.
+  // ========== ГРУППИРОВКА (обновлено) ==========
   function makePattern(str) {
-    return normalizeText(str).replace(/\d+/g, '#');
+    if (!str) return '';
+    // 1. Убираем цвета и |r (cleanWtsText уже делает это)
+    let cleaned = cleanWtsText(str);
+    // 2. Заменяем десятичные числа (например, 5.5) на #
+    cleaned = cleaned.replace(/\d+(?:\.\d+)?/g, '#');
+    // 3. Заменяем XML-подобные теги <...> на <TAG>
+    cleaned = cleaned.replace(/<[^>]+>/g, '<TAG>');
+    return cleaned;
   }
 
-  // Автоподстановка (из первого файла): заменяем числа в шаблонном переводе
-  // числами из оригинала целевой строки по порядку.
+  // ========== ИЗВЛЕЧЕНИЕ ЧИСЕЛ (обновлено) ==========
+  function extractNumbers(str) {
+    // Теперь регулярка захватывает и дробные числа (5.5)
+    const matches = str.match(/\d+(?:\.\d+)?/g);
+    return matches ? matches.map(Number) : [];
+  }
+
+  // ========== АВТОПОДСТАНОВКА (обновлено) ==========
   function applyTranslationToMember(templateTranslation, original) {
     const numbers = extractNumbers(original);
     let index = 0;
-    return templateTranslation.replace(/\d+/g, function(match) {
+    // Заменяем числа (включая дробные) в шаблоне числами из оригинала
+    return templateTranslation.replace(/\d+(?:\.\d+)?/g, function(match) {
       if (index < numbers.length) {
         return numbers[index++];
       }
@@ -833,7 +841,7 @@
           if (member.key === key) {
             memberTranslation = newTranslation;
           } else {
-            // автоподстановка из первого файла
+            // автоподстановка
             memberTranslation = applyTranslationToMember(newTranslation, member.original);
           }
           const localItem = allData.find(d => d.key === member.key);
@@ -1062,7 +1070,6 @@
         if (inactive) entryClasses += ' inactive';
         if (groupMode.checked && item._groupMembers && item._groupMembers.length > 1) entryClasses += ' group-header';
 
-        // Безопасное кодирование JSON группы (фича из второго файла)
         const groupDataEncoded = item._groupMembers ? encodeURIComponent(JSON.stringify(item._groupMembers)) : '';
 
         const leftColHtml = `
