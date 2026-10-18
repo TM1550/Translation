@@ -665,30 +665,23 @@
     return str.replace(/\s+/g, ' ').trim();
   }
 
-  // ========== ГРУППИРОВКА (обновлено) ==========
+  // ========== ГРУППИРОВКА ==========
   function makePattern(str) {
     if (!str) return '';
-    // 1. Убираем цвета и |r (cleanWtsText уже делает это)
     let cleaned = cleanWtsText(str);
-    // 2. Заменяем десятичные числа (например, 5.5) на #
     cleaned = cleaned.replace(/\d+(?:\.\d+)?/g, '#');
-    // 3. Заменяем XML-подобные теги <...> на <TAG>
     cleaned = cleaned.replace(/<[^>]+>/g, '<TAG>');
     return cleaned;
   }
 
-  // ========== ИЗВЛЕЧЕНИЕ ЧИСЕЛ (обновлено) ==========
   function extractNumbers(str) {
-    // Теперь регулярка захватывает и дробные числа (5.5)
     const matches = str.match(/\d+(?:\.\d+)?/g);
     return matches ? matches.map(Number) : [];
   }
 
-  // ========== АВТОПОДСТАНОВКА (обновлено) ==========
   function applyTranslationToMember(templateTranslation, original) {
     const numbers = extractNumbers(original);
     let index = 0;
-    // Заменяем числа (включая дробные) в шаблоне числами из оригинала
     return templateTranslation.replace(/\d+(?:\.\d+)?/g, function(match) {
       if (index < numbers.length) {
         return numbers[index++];
@@ -697,7 +690,6 @@
     });
   }
 
-  // Убирает WTS-теги — используется для сравнения и поиска.
   function cleanWtsText(text) {
     if (!text) return '';
     let cleaned = text.replace(/\|c[0-9a-fA-F]{6,8}/g, '');
@@ -841,7 +833,6 @@
           if (member.key === key) {
             memberTranslation = newTranslation;
           } else {
-            // автоподстановка
             memberTranslation = applyTranslationToMember(newTranslation, member.original);
           }
           const localItem = allData.find(d => d.key === member.key);
@@ -1541,43 +1532,36 @@
   });
 
   // ========== ЭКСПОРТ ==========
+  // ВАЖНО: экспорт идёт строго по ID из lastImportStructure.
+  // Если фразы нет в БД под её ID — она записывается с ПУСТЫМ переводом.
+  // Фолбэка по тексту НЕТ (иначе дубликаты вроде двух "Info" маскируют пропуски).
   function generateWTSFromStructure(data, structure) {
-    const contentIndex = buildContentIndex(data);
     let output = '';
     let exportedCount = 0;
-    const missing = []; // ID фраз, которых нет в БД
-  
+    const missing = []; // ID фраз, которых нет в БД под этим ID
+
     for (const s of structure) {
+      const sId = String(s.id);
       const c = normalizeForMatch(s.content);
-  
-      // 1. Сначала пробуем совпадение по ID (точнее)
-      let dbKey = null;
-      if (data[s.id] && normalizeForMatch(data[s.id].original) === c) {
-        dbKey = s.id;
-      }
-      // 2. Затем — по тексту
-      if (!dbKey) {
-        dbKey = contentIndex.get(c);
-      }
-  
+      const dbEntry = data[sId];
+
       let textToWrite;
       let comment;
-  
-      if (!dbKey) {
-        // Фразы нет в БД — записываем с ПУСТЫМ переводом
-        missing.push(s.id);
+
+      // Строгая проверка: запись должна быть в БД ПОД ТЕМ ЖЕ ID и с тем же текстом
+      if (dbEntry && normalizeForMatch(dbEntry.original) === c) {
+        const translation = dbEntry.translation || '';
+        textToWrite = translation.trim() !== '' ? translation : (s.content || '').trim();
+        comment = s.comment || dbEntry.wtsComment || '';
+      } else {
+        // Нет записи в БД под этим ID — пишем пустую строку
+        missing.push(sId);
         textToWrite = '';
         comment = s.comment || '';
-      } else {
-        const entry = data[dbKey];
-        const translation = entry.translation || '';
-        textToWrite = translation.trim() !== '' ? translation : (s.content || '').trim();
-        comment = s.comment || entry.wtsComment || '';
       }
-  
-      output += `STRING ${s.id}`;
+
+      output += `STRING ${sId}`;
       if (comment) output += ` // ${comment}`;
-      // Пустая фраза — без лишней пустой строки внутри { }
       if (textToWrite === '') {
         output += `\n{\n}\n\n`;
       } else {
@@ -1585,10 +1569,10 @@
       }
       exportedCount++;
     }
-  
+
     return { text: output, count: exportedCount, missing };
   }
-  
+
   function exportWTS() {
     stringsRef.once('value', (snapshot) => {
       const data = snapshot.val();
@@ -1600,13 +1584,21 @@
         alert('Нет данных о последнем загруженном файле.\nСначала загрузите .wts с оригинальными фразами.');
         return;
       }
-  
+
       const result = generateWTSFromStructure(data, lastImportStructure);
       if (result.count === 0) {
         alert('Не удалось экспортировать ни одной фразы.');
         return;
       }
-  
+
+      // Логи для отладки (F12 → Console)
+      console.log('Экспорт: всего фраз в структуре:', lastImportStructure.length);
+      console.log('Экспорт: пустых (нет в БД под их ID):', result.missing.length);
+      if (result.missing.length > 0) {
+        console.log('Экспорт: ID без записи в БД:', result.missing);
+      }
+      window.__lastExportResult = result; // для ручного просмотра в консоли
+
       const blob = new Blob([result.text], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1616,20 +1608,20 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-  
+
       let msg = `Экспортировано ${result.count} фраз.`;
       if (result.missing.length > 0) {
-        msg += `\n\n⚠️ Фраз, отсутствующих в БД: ${result.missing.length}.\n` +
-               `Они записаны в файл с пустым переводом.`;
-        if (result.missing.length <= 20) {
+        msg += `\n\n⚠️ Фраз без записи в БД (записаны с пустым переводом): ${result.missing.length}.`;
+        if (result.missing.length <= 30) {
           msg += `\nID: ${result.missing.join(', ')}`;
         } else {
-          msg += `\nПервые ID: ${result.missing.slice(0, 20).join(', ')}…`;
+          msg += `\nПервые 30 ID: ${result.missing.slice(0, 30).join(', ')}…`;
         }
       }
       alert(msg);
     });
   }
+
   exportBtn.addEventListener('click', exportWTS);
 
   // ========== СКАЧИВАНИЕ БД ==========
