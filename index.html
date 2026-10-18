@@ -1542,25 +1542,53 @@
 
   // ========== ЭКСПОРТ ==========
   function generateWTSFromStructure(data, structure) {
-    const index = buildContentIndex(data);
+    const contentIndex = buildContentIndex(data);
     let output = '';
     let exportedCount = 0;
+    const missing = []; // ID фраз, которых нет в БД
+  
     for (const s of structure) {
       const c = normalizeForMatch(s.content);
-      const dbKey = index.get(c);
-      if (!dbKey) continue;
-      const entry = data[dbKey];
-      const translation = entry.translation || '';
-      const textToWrite = translation.trim() !== '' ? translation : (s.content || '').trim();
-      const comment = s.comment || entry.wtsComment || '';
+  
+      // 1. Сначала пробуем совпадение по ID (точнее)
+      let dbKey = null;
+      if (data[s.id] && normalizeForMatch(data[s.id].original) === c) {
+        dbKey = s.id;
+      }
+      // 2. Затем — по тексту
+      if (!dbKey) {
+        dbKey = contentIndex.get(c);
+      }
+  
+      let textToWrite;
+      let comment;
+  
+      if (!dbKey) {
+        // Фразы нет в БД — записываем с ПУСТЫМ переводом
+        missing.push(s.id);
+        textToWrite = '';
+        comment = s.comment || '';
+      } else {
+        const entry = data[dbKey];
+        const translation = entry.translation || '';
+        textToWrite = translation.trim() !== '' ? translation : (s.content || '').trim();
+        comment = s.comment || entry.wtsComment || '';
+      }
+  
       output += `STRING ${s.id}`;
       if (comment) output += ` // ${comment}`;
-      output += `\n{\n${textToWrite}\n}\n\n`;
+      // Пустая фраза — без лишней пустой строки внутри { }
+      if (textToWrite === '') {
+        output += `\n{\n}\n\n`;
+      } else {
+        output += `\n{\n${textToWrite}\n}\n\n`;
+      }
       exportedCount++;
     }
-    return { text: output, count: exportedCount };
+  
+    return { text: output, count: exportedCount, missing };
   }
-
+  
   function exportWTS() {
     stringsRef.once('value', (snapshot) => {
       const data = snapshot.val();
@@ -1572,11 +1600,13 @@
         alert('Нет данных о последнем загруженном файле.\nСначала загрузите .wts с оригинальными фразами.');
         return;
       }
+  
       const result = generateWTSFromStructure(data, lastImportStructure);
       if (result.count === 0) {
-        alert('Ни одна фраза из последнего загруженного файла не найдена в базе. Экспорт отменён.');
+        alert('Не удалось экспортировать ни одной фразы.');
         return;
       }
+  
       const blob = new Blob([result.text], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1586,10 +1616,20 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      alert(`Экспортировано ${result.count} фраз по структуре последнего загруженного файла.`);
+  
+      let msg = `Экспортировано ${result.count} фраз.`;
+      if (result.missing.length > 0) {
+        msg += `\n\n⚠️ Фраз, отсутствующих в БД: ${result.missing.length}.\n` +
+               `Они записаны в файл с пустым переводом.`;
+        if (result.missing.length <= 20) {
+          msg += `\nID: ${result.missing.join(', ')}`;
+        } else {
+          msg += `\nПервые ID: ${result.missing.slice(0, 20).join(', ')}…`;
+        }
+      }
+      alert(msg);
     });
   }
-
   exportBtn.addEventListener('click', exportWTS);
 
   // ========== СКАЧИВАНИЕ БД ==========
