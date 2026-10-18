@@ -99,8 +99,6 @@
     .toolbar .import-btn:hover { background: #bf360c; }
     .toolbar .import-translations-wts-btn { background: #4a148c; }
     .toolbar .import-translations-wts-btn:hover { background: #6a1b9a; }
-    .toolbar .rebuild-empty-btn { background: #6a1b9a; }
-    .toolbar .rebuild-empty-btn:hover { background: #4a148c; }
     .toolbar .db-download-btn { background: #00695c; }
     .toolbar .db-download-btn:hover { background: #004d40; }
     .toolbar .db-restore-btn { background: #b71c1c; }
@@ -389,7 +387,6 @@
       <input type="checkbox" id="confirmImportedTranslations"> Подтвердить импорт
     </label>
     <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts</button>
-    <button class="rebuild-empty-btn" id="rebuildEmptyBtn" style="display:none;" title="Пересчитать список пустых фраз для текущего файла и сохранить в БД">🔍 Пересчитать пустые</button>
 
     <button class="db-download-btn" id="dbDownloadBtn" style="display:none;">💾 Скачать БД</button>
     <button class="db-restore-btn" id="dbRestoreBtn" style="display:none;">📤 Восстановить БД</button>
@@ -480,7 +477,6 @@
   const translationsWtsInput = document.getElementById('translationsWtsInput');
   const confirmImportedTranslations = document.getElementById('confirmImportedTranslations');
   const exportBtn = document.getElementById('exportBtn');
-  const rebuildEmptyBtn = document.getElementById('rebuildEmptyBtn');
   const refreshBtn = document.getElementById('refreshBtn');
   const filterOnlyRussian = document.getElementById('filterOnlyRussian');
   const filterNoTranslation = document.getElementById('filterNoTranslation');
@@ -527,7 +523,7 @@
   let currentUserCanManageDb = false;
   let importedNumbers = [];
   let lastImportStructure = [];
-  let emptyStringIds = []; // ID фраз из текущего файла, для которых нет перевода
+  let emptyStringIds = []; // список ID фраз из текущего файла без перевода
 
   // ========== АВТОРИЗАЦИЯ ==========
   function isAuthSupported() {
@@ -574,7 +570,6 @@
       importBtn.style.display = 'none';
       importTranslationsWtsBtn.style.display = 'none';
       exportBtn.style.display = 'none';
-      rebuildEmptyBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
       dbDownloadBtn.style.display = 'none';
       dbRestoreBtn.style.display = 'none';
@@ -597,13 +592,11 @@
       importBtn.style.display = 'inline-block';
       importTranslationsWtsBtn.style.display = 'inline-block';
       exportBtn.style.display = 'inline-block';
-      rebuildEmptyBtn.style.display = 'inline-block';
       confirmImportedTranslations.closest('label').style.display = 'inline-flex';
     } else {
       importBtn.style.display = 'none';
       importTranslationsWtsBtn.style.display = 'none';
       exportBtn.style.display = 'none';
-      rebuildEmptyBtn.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
     }
 
@@ -723,6 +716,19 @@
     return index;
   }
 
+  // Индекс: нормализованный текст → первый ключ с НЕПУСТЫМ переводом.
+  // Используется при экспорте, чтобы для ID без своего перевода взять перевод от «двойника» по тексту.
+  function buildTranslationIndex(data) {
+    const index = new Map();
+    for (const [key, entry] of Object.entries(data || {})) {
+      const c = normalizeForMatch(entry.original);
+      const tr = (entry.translation || '').trim();
+      if (tr === '') continue;
+      if (!index.has(c)) index.set(c, key);
+    }
+    return index;
+  }
+
   function buildGroups(dataArray) {
     const map = new Map();
     for (const item of dataArray) {
@@ -740,79 +746,38 @@
   }
 
   // ========== СПИСОК ПУСТЫХ СТРОК ==========
-  // Возвращает массив ID из структуры, для которых нет перевода ни под своим ID,
-  // ни под каким-либо другим ID с тем же (нормализованным) текстом.
+  // Возвращает массив ID из структуры, для которых НЕТ перевода:
+  //  - ни под своим ID,
+  //  - ни у «двойника» (запись с тем же нормализованным текстом).
   function computeEmptyIds(data, structure) {
     if (!structure || structure.length === 0) return [];
 
-    // Индекс: нормализованный текст → есть ли хоть один перевод
     const hasTranslationByText = new Map();
     for (const entry of Object.values(data || {})) {
       const c = normalizeOriginalForCompare(entry.original);
       const tr = (entry.translation || '').trim();
-      if (tr !== '' && !hasTranslationByText.has(c)) {
-        hasTranslationByText.set(c, true);
-      }
+      if (tr !== '') hasTranslationByText.set(c, true);
     }
 
-    const emptyIds = [];
+    const result = [];
     for (const s of structure) {
       const sId = String(s.id);
       const c = normalizeOriginalForCompare(s.content);
-      const dbEntry = data ? data[sId] : null;
-
       let hasTranslation = false;
 
-      // 1. Своя запись под тем же ID с тем же текстом и переводом?
-      if (dbEntry && normalizeOriginalForCompare(dbEntry.original) === c) {
-        if ((dbEntry.translation || '').trim() !== '') {
-          hasTranslation = true;
-        }
+      const ownEntry = data ? data[sId] : null;
+      if (ownEntry && normalizeOriginalForCompare(ownEntry.original) === c) {
+        if ((ownEntry.translation || '').trim() !== '') hasTranslation = true;
       }
-
-      // 2. Дубликат по тексту с переводом?
       if (!hasTranslation && hasTranslationByText.has(c)) {
         hasTranslation = true;
       }
 
-      if (!hasTranslation) emptyIds.push(sId);
+      if (!hasTranslation) result.push(sId);
     }
 
-    return emptyIds;
+    return result;
   }
-
-  // Пересчитывает список пустых фраз для текущего файла и сохраняет его в metadata/emptyStringIds.
-  // Возвращает Promise<{ emptyIds, data, structure }> — все данные, прочитанные из БД.
-  function rebuildEmptyStringsList() {
-    return Promise.all([stringsRef.once('value'), metadataRef.once('value')])
-      .then(([stringsSnap, metaSnap]) => {
-        const data = stringsSnap.val() || {};
-        const meta = metaSnap.val() || {};
-        const structure = Array.isArray(meta.lastImportStructure) ? meta.lastImportStructure : [];
-        const emptyIds = computeEmptyIds(data, structure);
-
-        return metadataRef.child('emptyStringIds').set(emptyIds)
-          .then(() => ({ emptyIds, data, structure }));
-      });
-  }
-
-  rebuildEmptyBtn.addEventListener('click', () => {
-    rebuildEmptyStringsList()
-      .then(({ emptyIds }) => {
-        if (emptyIds.length === 0) {
-          alert('Пересчитано. Пустых фраз нет — все фразы текущего файла имеют перевод.');
-        } else {
-          let msg = `Пересчитано. Пустых фраз: ${emptyIds.length}.`;
-          if (emptyIds.length <= 30) {
-            msg += `\nID: ${emptyIds.join(', ')}`;
-          } else {
-            msg += `\nПервые 30 ID: ${emptyIds.slice(0, 30).join(', ')}…`;
-          }
-          alert(msg);
-        }
-      })
-      .catch(err => alert('Ошибка пересчёта: ' + err.message));
-  });
 
   // ========== ФИЛЬТРАЦИЯ ==========
   function getFilteredData() {
@@ -1476,15 +1441,28 @@
               comment: item.comment || ''
             }));
             metadataRef.set({ importedNumbers: numbers, lastImportStructure: structure })
-              .then(() => {
+              .then(() => stringsRef.once('value'))
+              .then((snap) => {
+                const freshData = snap.val() || {};
+                const emptyIds = computeEmptyIds(freshData, structure);
+                return metadataRef.child('emptyStringIds').set(emptyIds)
+                  .then(() => ({ emptyIds }));
+              })
+              .then(({ emptyIds }) => {
                 importedNumbers = numbers;
                 lastImportStructure = structure;
+                emptyStringIds = emptyIds;
                 filterByImported.checked = true;
                 currentPage = 0;
-                // Автоматически пересчитываем список пустых для нового файла
-                rebuildEmptyStringsList().catch(err => console.warn('Не удалось пересчитать пустые:', err));
                 let msg = `Импортировано ${parsed.length} строк. Включён фильтр "Только загруженные".`;
                 if (relocatedCount > 0) msg += `\nПеренесено старых фраз (конфликт по ID): ${relocatedCount}.`;
+                if (emptyIds.length > 0) {
+                  msg += `\n\nПустых фраз (без перевода): ${emptyIds.length}.`;
+                  if (emptyIds.length <= 20) msg += `\nID: ${emptyIds.join(', ')}`;
+                  else msg += `\nПервые 20 ID: ${emptyIds.slice(0, 20).join(', ')}…`;
+                } else {
+                  msg += `\n\nВсе фразы имеют перевод.`;
+                }
                 alert(msg);
                 render();
               })
@@ -1595,8 +1573,6 @@
                 }
               }
             }
-            // Пересчитываем пустые после импорта переводов
-            rebuildEmptyStringsList().catch(err => console.warn('Не удалось пересчитать пустые:', err));
             render();
             alert(
               `Обновлено переводов: ${added}.\n` +
@@ -1620,109 +1596,90 @@
   });
 
   // ========== ЭКСПОРТ ==========
-  // Использует список emptyStringIds:
-  //  - если ID в списке → фраза пишется ПУСТОЙ ({ \n \n })
-  //  - иначе → ищем перевод: своя запись под ID (с тем же текстом), иначе дубликат по тексту
+  // Для ID из emptyStringIds пишем пустую фразу `{ \n \n }`.
+  // Для остальных: сначала пробуем перевод по своему ID, затем — по «двойнику» (тем же текстом).
   function generateWTSFromStructure(data, structure, emptyIds) {
     const emptySet = new Set((emptyIds || []).map(String));
-
-    // Индекс: нормализованный текст → первый непустой перевод (для дубликатов)
-    const translationByText = new Map();
-    for (const entry of Object.values(data || {})) {
-      const c = normalizeForMatch(entry.original);
-      const tr = (entry.translation || '').trim();
-      if (tr !== '' && !translationByText.has(c)) {
-        translationByText.set(c, entry.translation);
-      }
-    }
-
+    const translationIndex = buildTranslationIndex(data);
     let output = '';
     let exportedCount = 0;
+    let emptyCount = 0;
 
     for (const s of structure) {
       const sId = String(s.id);
       const c = normalizeForMatch(s.content);
-      const dbEntry = data ? data[sId] : null;
 
       let textToWrite = '';
+      let comment = s.comment || '';
 
-      if (!emptySet.has(sId)) {
-        // 1. Своя запись под ID
-        if (dbEntry && normalizeForMatch(dbEntry.original) === c) {
-          const tr = (dbEntry.translation || '').trim();
-          if (tr !== '') textToWrite = dbEntry.translation;
+      if (emptySet.has(sId)) {
+        const ownEntry = data ? data[sId] : null;
+        if (ownEntry && ownEntry.wtsComment) comment = s.comment || ownEntry.wtsComment;
+      } else {
+        const ownEntry = data ? data[sId] : null;
+        if (ownEntry && normalizeForMatch(ownEntry.original) === c) {
+          const tr = (ownEntry.translation || '').trim();
+          if (tr !== '') {
+            textToWrite = ownEntry.translation;
+            comment = s.comment || ownEntry.wtsComment || '';
+          }
         }
-        // 2. Дубликат по тексту
         if (textToWrite === '') {
-          const fallback = translationByText.get(c);
-          if (fallback) textToWrite = fallback;
+          const fallbackKey = translationIndex.get(c);
+          if (fallbackKey) {
+            const fbEntry = data[fallbackKey];
+            textToWrite = fbEntry.translation;
+            comment = s.comment || fbEntry.wtsComment || '';
+          }
         }
       }
 
-      const comment = s.comment || (dbEntry && dbEntry.wtsComment) || '';
       output += `STRING ${sId}`;
       if (comment) output += ` // ${comment}`;
       if (textToWrite === '') {
-        // Пустая фраза: внутри { } одна строка с пробелом — как в примере пользователя
+        // Пустая фраза — пробел на отдельной строке, как в примере
         output += `\n{\n \n}\n\n`;
+        emptyCount++;
       } else {
         output += `\n{\n${textToWrite}\n}\n\n`;
       }
       exportedCount++;
     }
 
-    return { text: output, count: exportedCount };
+    return { text: output, count: exportedCount, emptyCount };
   }
 
   function exportWTS() {
-    if (!lastImportStructure || lastImportStructure.length === 0) {
-      alert('Нет данных о последнем загруженном файле.\nСначала загрузите .wts с оригинальными фразами.');
-      return;
-    }
-
-    // Пересчитываем список пустых перед экспортом и используем уже прочитанные данные
-    rebuildEmptyStringsList()
-      .then(({ emptyIds, data, structure }) => {
-        if (!data || Object.keys(data).length === 0) {
-          alert('Нет данных для экспорта.');
-          return;
-        }
-        if (!structure || structure.length === 0) {
-          alert('Нет данных о последнем загруженном файле.\nСначала загрузите .wts с оригинальными фразами.');
-          return;
-        }
-
-        const result = generateWTSFromStructure(data, structure, emptyIds);
-        if (result.count === 0) {
-          alert('Не удалось экспортировать ни одной фразы.');
-          return;
-        }
-
-        const blob = new Blob([result.text], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'translated_strings.wts';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-
-        let msg = `Экспортировано ${result.count} фраз.`;
-        if (emptyIds.length > 0) {
-          msg += `\n\n⚠️ Пустых фраз (без перевода): ${emptyIds.length}.`;
-          if (emptyIds.length <= 30) {
-            msg += `\nID: ${emptyIds.join(', ')}`;
-          } else {
-            msg += `\nПервые 30 ID: ${emptyIds.slice(0, 30).join(', ')}…`;
-          }
-        }
-        alert(msg);
-      })
-      .catch(err => {
-        console.error('Ошибка экспорта:', err);
-        alert('Ошибка экспорта: ' + err.message);
-      });
+    stringsRef.once('value', (snapshot) => {
+      const data = snapshot.val();
+      if (!data || Object.keys(data).length === 0) {
+        alert('Нет данных для экспорта.');
+        return;
+      }
+      if (!lastImportStructure || lastImportStructure.length === 0) {
+        alert('Нет данных о последнем загруженном файле.\nСначала загрузите .wts с оригинальными фразами.');
+        return;
+      }
+      const result = generateWTSFromStructure(data, lastImportStructure, emptyStringIds);
+      if (result.count === 0) {
+        alert('Ни одна фраза из последнего загруженного файла не найдена в базе. Экспорт отменён.');
+        return;
+      }
+      const blob = new Blob([result.text], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'translated_strings.wts';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      let msg = `Экспортировано ${result.count} фраз по структуре последнего загруженного файла.`;
+      if (result.emptyCount > 0) {
+        msg += `\n\nПустых фраз (без перевода): ${result.emptyCount}.`;
+      }
+      alert(msg);
+    });
   }
 
   exportBtn.addEventListener('click', exportWTS);
