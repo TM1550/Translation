@@ -1532,47 +1532,60 @@
   });
 
   // ========== ЭКСПОРТ ==========
-  // ВАЖНО: экспорт идёт строго по ID из lastImportStructure.
-  // Если фразы нет в БД под её ID — она записывается с ПУСТЫМ переводом.
-  // Фолбэка по тексту НЕТ (иначе дубликаты вроде двух "Info" маскируют пропуски).
   function generateWTSFromStructure(data, structure) {
+    // Индекс: нормализованный текст → перевод (только если перевод НЕ пустой).
+    // Нужен для фраз, у которых нет перевода под своим ID, но есть "двойник" с переводом.
+    const translationByText = new Map();
+    for (const entry of Object.values(data)) {
+      const c = normalizeForMatch(entry.original);
+      const tr = (entry.translation || '').trim();
+      if (tr !== '' && !translationByText.has(c)) {
+        translationByText.set(c, entry.translation);
+      }
+    }
+  
     let output = '';
     let exportedCount = 0;
-    const missing = []; // ID фраз, которых нет в БД под этим ID
-
+    const empty = []; // ID фраз, для которых перевод так и не нашёлся
+  
     for (const s of structure) {
       const sId = String(s.id);
       const c = normalizeForMatch(s.content);
       const dbEntry = data[sId];
-
-      let textToWrite;
-      let comment;
-
-      // Строгая проверка: запись должна быть в БД ПОД ТЕМ ЖЕ ID и с тем же текстом
+  
+      let textToWrite = '';
+  
+      // 1. Приоритет — своя запись под тем же ID с тем же текстом и с переводом
       if (dbEntry && normalizeForMatch(dbEntry.original) === c) {
-        const translation = dbEntry.translation || '';
-        textToWrite = translation.trim() !== '' ? translation : (s.content || '').trim();
-        comment = s.comment || dbEntry.wtsComment || '';
-      } else {
-        // Нет записи в БД под этим ID — пишем пустую строку
-        missing.push(sId);
-        textToWrite = '';
-        comment = s.comment || '';
+        const tr = (dbEntry.translation || '').trim();
+        if (tr !== '') textToWrite = dbEntry.translation;
       }
-
+  
+      // 2. Если перевода нет — ищем перевод у любой другой записи с тем же текстом
+      if (textToWrite === '') {
+        const fallback = translationByText.get(c);
+        if (fallback) textToWrite = fallback;
+      }
+  
+      // 3. Перевода нигде нет — фраза пустая
+      if (textToWrite === '') empty.push(sId);
+  
+      const comment = s.comment || (dbEntry && dbEntry.wtsComment) || '';
       output += `STRING ${sId}`;
       if (comment) output += ` // ${comment}`;
+  
       if (textToWrite === '') {
-        output += `\n{\n}\n\n`;
+        // Пустая фраза: внутри { } одна строка с пробелом — как в вашем примере
+        output += `\n{\n \n}\n\n`;
       } else {
         output += `\n{\n${textToWrite}\n}\n\n`;
       }
       exportedCount++;
     }
-
-    return { text: output, count: exportedCount, missing };
+  
+    return { text: output, count: exportedCount, empty };
   }
-
+  
   function exportWTS() {
     stringsRef.once('value', (snapshot) => {
       const data = snapshot.val();
@@ -1584,21 +1597,21 @@
         alert('Нет данных о последнем загруженном файле.\nСначала загрузите .wts с оригинальными фразами.');
         return;
       }
-
+  
       const result = generateWTSFromStructure(data, lastImportStructure);
       if (result.count === 0) {
         alert('Не удалось экспортировать ни одной фразы.');
         return;
       }
-
+  
       // Логи для отладки (F12 → Console)
       console.log('Экспорт: всего фраз в структуре:', lastImportStructure.length);
-      console.log('Экспорт: пустых (нет в БД под их ID):', result.missing.length);
-      if (result.missing.length > 0) {
-        console.log('Экспорт: ID без записи в БД:', result.missing);
+      console.log('Экспорт: пустых (перевод не найден):', result.empty.length);
+      if (result.empty.length > 0) {
+        console.log('Экспорт: ID без перевода:', result.empty);
       }
-      window.__lastExportResult = result; // для ручного просмотра в консоли
-
+      window.__lastExportResult = result;
+  
       const blob = new Blob([result.text], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1608,14 +1621,14 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-
+  
       let msg = `Экспортировано ${result.count} фраз.`;
-      if (result.missing.length > 0) {
-        msg += `\n\n⚠️ Фраз без записи в БД (записаны с пустым переводом): ${result.missing.length}.`;
-        if (result.missing.length <= 30) {
-          msg += `\nID: ${result.missing.join(', ')}`;
+      if (result.empty.length > 0) {
+        msg += `\n\n⚠️ Фраз без перевода (записаны пустыми): ${result.empty.length}.`;
+        if (result.empty.length <= 30) {
+          msg += `\nID: ${result.empty.join(', ')}`;
         } else {
-          msg += `\nПервые 30 ID: ${result.missing.slice(0, 30).join(', ')}…`;
+          msg += `\nПервые 30 ID: ${result.empty.slice(0, 30).join(', ')}…`;
         }
       }
       alert(msg);
