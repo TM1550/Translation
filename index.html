@@ -523,7 +523,7 @@
   let currentUserCanManageDb = false;
   let importedNumbers = [];
   let lastImportStructure = [];
-  let emptyStringIds = []; // список ID фраз из текущего файла без перевода
+  let emptyStringIds = [];
 
   // ========== АВТОРИЗАЦИЯ ==========
   function isAuthSupported() {
@@ -675,11 +675,13 @@
     return cleaned;
   }
 
+  // ========== ИЗВЛЕЧЕНИЕ ЧИСЕЛ ==========
   function extractNumbers(str) {
     const matches = str.match(/\d+(?:\.\d+)?/g);
     return matches ? matches.map(Number) : [];
   }
 
+  // ========== АВТОПОДСТАНОВКА ==========
   function applyTranslationToMember(templateTranslation, original) {
     const numbers = extractNumbers(original);
     let index = 0;
@@ -716,19 +718,6 @@
     return index;
   }
 
-  // Индекс: нормализованный текст → первый ключ с НЕПУСТЫМ переводом.
-  // Используется при экспорте, чтобы для ID без своего перевода взять перевод от «двойника» по тексту.
-  function buildTranslationIndex(data) {
-    const index = new Map();
-    for (const [key, entry] of Object.entries(data || {})) {
-      const c = normalizeForMatch(entry.original);
-      const tr = (entry.translation || '').trim();
-      if (tr === '') continue;
-      if (!index.has(c)) index.set(c, key);
-    }
-    return index;
-  }
-
   function buildGroups(dataArray) {
     const map = new Map();
     for (const item of dataArray) {
@@ -743,40 +732,6 @@
     }
     groups.sort((a, b) => parseInt(a.members[0].key) - parseInt(b.members[0].key));
     return groups;
-  }
-
-  // ========== СПИСОК ПУСТЫХ СТРОК ==========
-  // Возвращает массив ID из структуры, для которых НЕТ перевода:
-  //  - ни под своим ID,
-  //  - ни у «двойника» (запись с тем же нормализованным текстом).
-  function computeEmptyIds(data, structure) {
-    if (!structure || structure.length === 0) return [];
-
-    const hasTranslationByText = new Map();
-    for (const entry of Object.values(data || {})) {
-      const c = normalizeOriginalForCompare(entry.original);
-      const tr = (entry.translation || '').trim();
-      if (tr !== '') hasTranslationByText.set(c, true);
-    }
-
-    const result = [];
-    for (const s of structure) {
-      const sId = String(s.id);
-      const c = normalizeOriginalForCompare(s.content);
-      let hasTranslation = false;
-
-      const ownEntry = data ? data[sId] : null;
-      if (ownEntry && normalizeOriginalForCompare(ownEntry.original) === c) {
-        if ((ownEntry.translation || '').trim() !== '') hasTranslation = true;
-      }
-      if (!hasTranslation && hasTranslationByText.has(c)) {
-        hasTranslation = true;
-      }
-
-      if (!hasTranslation) result.push(sId);
-    }
-
-    return result;
   }
 
   // ========== ФИЛЬТРАЦИЯ ==========
@@ -1026,7 +981,6 @@
       let statsText = `Всего: ${totalAll} | Отфильтровано: ${filteredCount} | Показано: ${totalDisplay}`;
       if (filterByImported.checked && importedNumbers.length > 0) statsText += ` (только загруженные)`;
       if (searchTerm !== '') statsText += ` | Поиск: "${searchTerm}"`;
-      if (emptyStringIds.length > 0) statsText += ` | Пустых в файле: ${emptyStringIds.length}`;
       statsSpan.textContent = statsText;
 
       if (totalDisplay === 0) {
@@ -1305,6 +1259,8 @@
       .catch(err => alert('Ошибка обновления подтверждения: ' + err.message));
   }
 
+  // ========== ПАРСИНГ WTS ==========
+  // Возвращает все строки, включая пустые (с флагом isEmpty)
   function parseWTS(text) {
     const regex = /STRING\s+(\d+)\s*(?:\/\/([^\n]*))?\s*\{([\s\S]*?)\}/g;
     const entries = [];
@@ -1313,7 +1269,12 @@
       const number = match[1];
       const comment = (match[2] || '').trim();
       const content = match[3];
-      if (content.trim() !== '') entries.push({ number, comment, content });
+      entries.push({
+        number,
+        comment,
+        content,
+        isEmpty: content.trim() === ''
+      });
     }
     return entries;
   }
@@ -1324,12 +1285,19 @@
     reader.onload = function(e) {
       try {
         const text = e.target.result;
-        const parsed = parseWTS(text);
-        if (parsed.length === 0) {
-          alert('Не удалось найти ни одной непустой строки STRING в файле.');
+        const allParsed = parseWTS(text);
+        const parsed = allParsed.filter(p => !p.isEmpty);      // непустые
+        const emptyParsed = allParsed.filter(p => p.isEmpty);  // пустые
+
+        if (allParsed.length === 0) {
+          alert('Не удалось найти ни одной строки STRING в файле.');
           return;
         }
-        if (!window.confirm(`Найдено ${parsed.length} непустых строк. Импортировать?`)) return;
+
+        const confirmMsg = emptyParsed.length > 0
+          ? `Найдено ${parsed.length} непустых и ${emptyParsed.length} пустых строк.\nПустые строки будут запомнены и выведены при экспорте.\nИмпортировать?`
+          : `Найдено ${parsed.length} непустых строк. Импортировать?`;
+        if (!window.confirm(confirmMsg)) return;
 
         const norm = (t) => normalizeOriginalForCompare(t);
         const inactiveByContent = new Map();
@@ -1356,8 +1324,9 @@
           finalMap.set(item.key, { ...item });
         }
 
+        // Резервируем ID ВСЕХ строк из файла, включая пустые
         const reservedIds = new Set();
-        for (const p of parsedByContent.values()) reservedIds.add(String(p.number));
+        for (const p of allParsed) reservedIds.add(String(p.number));
 
         let maxId = 0;
         for (const k of finalMap.keys()) maxId = Math.max(maxId, parseInt(k) || 0);
@@ -1434,35 +1403,36 @@
 
         stringsRef.update(updates)
           .then(() => {
+            // importedNumbers — только непустые
             const numbers = parsed.map(item => item.number);
-            const structure = parsed.map(item => ({
+
+            // Структура файла целиком (с сохранением порядка), включая пустые
+            const structure = allParsed.map(item => ({
               id: String(item.number),
               content: item.content,
-              comment: item.comment || ''
+              comment: item.comment || '',
+              isEmpty: item.isEmpty === true
             }));
-            metadataRef.set({ importedNumbers: numbers, lastImportStructure: structure })
-              .then(() => stringsRef.once('value'))
-              .then((snap) => {
-                const freshData = snap.val() || {};
-                const emptyIds = computeEmptyIds(freshData, structure);
-                return metadataRef.child('emptyStringIds').set(emptyIds)
-                  .then(() => ({ emptyIds }));
-              })
-              .then(({ emptyIds }) => {
+
+            // Явный список ID пустых строк
+            const emptyIds = emptyParsed.map(item => String(item.number));
+
+            metadataRef.set({
+              importedNumbers: numbers,
+              lastImportStructure: structure,
+              emptyStringIds: emptyIds
+            })
+              .then(() => {
                 importedNumbers = numbers;
                 lastImportStructure = structure;
                 emptyStringIds = emptyIds;
                 filterByImported.checked = true;
                 currentPage = 0;
-                let msg = `Импортировано ${parsed.length} строк. Включён фильтр "Только загруженные".`;
+
+                let msg = `Импортировано ${parsed.length} непустых строк`;
+                if (emptyParsed.length > 0) msg += ` и ${emptyParsed.length} пустых (будут выведены при экспорте)`;
+                msg += `. Включён фильтр "Только загруженные".`;
                 if (relocatedCount > 0) msg += `\nПеренесено старых фраз (конфликт по ID): ${relocatedCount}.`;
-                if (emptyIds.length > 0) {
-                  msg += `\n\nПустых фраз (без перевода): ${emptyIds.length}.`;
-                  if (emptyIds.length <= 20) msg += `\nID: ${emptyIds.join(', ')}`;
-                  else msg += `\nПервые 20 ID: ${emptyIds.slice(0, 20).join(', ')}…`;
-                } else {
-                  msg += `\n\nВсе фразы имеют перевод.`;
-                }
                 alert(msg);
                 render();
               })
@@ -1492,11 +1462,14 @@
     reader.onload = function(e) {
       try {
         const text = e.target.result;
-        const parsed = parseWTS(text);
+        const allParsed = parseWTS(text);
+        const parsed = allParsed.filter(p => !p.isEmpty);
+
         if (parsed.length === 0) {
           alert('Не удалось найти ни одной непустой строки STRING в файле.');
           return;
         }
+
         const user = getCurrentUserInfo();
         const shouldConfirm = confirmImportedTranslations.checked;
         const structureById = new Map();
@@ -1509,6 +1482,7 @@
         const updates = {};
         let added = 0;
         let skippedUntranslated = 0;
+        let skippedEmptyOriginals = 0;
         const notFound = [];
         for (const item of parsed) {
           const id = String(item.number);
@@ -1516,8 +1490,13 @@
           if (!transContent) continue;
           let origContent = null;
           const struct = structureById.get(id);
-          if (struct) origContent = struct.content;
-          else {
+          if (struct) {
+            if (struct.isEmpty || !struct.content || String(struct.content).trim() === '') {
+              skippedEmptyOriginals++;
+              continue;
+            }
+            origContent = struct.content;
+          } else {
             const byId = allData.find(d => d.key === id);
             if (byId) origContent = byId.original;
           }
@@ -1544,6 +1523,7 @@
         }
         if (added === 0) {
           let msg = `Не найдено переводов для загрузки.\nПропущено непереведённых фраз: ${skippedUntranslated}.`;
+          if (skippedEmptyOriginals > 0) msg += `\nПропущено (пустые оригиналы): ${skippedEmptyOriginals}.`;
           if (notFound.length > 0) msg += `\nНе найдено в базе по ID: ${notFound.length}.`;
           alert(msg);
           return;
@@ -1552,6 +1532,7 @@
         if (!window.confirm(
           `Найдено переводов для загрузки: ${added}.\n` +
           `Пропущено непереведённых: ${skippedUntranslated}.\n` +
+          (skippedEmptyOriginals > 0 ? `Пропущено (пустые оригиналы): ${skippedEmptyOriginals}.\n` : '') +
           `Не найдено в базе: ${notFound.length}.${confirmMsg}\n\nПродолжить?`
         )) return;
         const promiseArray = [];
@@ -1577,6 +1558,7 @@
             alert(
               `Обновлено переводов: ${added}.\n` +
               `Пропущено непереведённых: ${skippedUntranslated}.` +
+              (skippedEmptyOriginals > 0 ? `\nПропущено (пустые оригиналы): ${skippedEmptyOriginals}.` : '') +
               (notFound.length > 0 ? `\nНе найдено: ${notFound.length}.` : '')
             );
           })
@@ -1596,53 +1578,36 @@
   });
 
   // ========== ЭКСПОРТ ==========
-  // Для ID из emptyStringIds пишем пустую фразу `{ \n \n }`.
-  // Для остальных: сначала пробуем перевод по своему ID, затем — по «двойнику» (тем же текстом).
-  function generateWTSFromStructure(data, structure, emptyIds) {
-    const emptySet = new Set((emptyIds || []).map(String));
-    const translationIndex = buildTranslationIndex(data);
+  function generateWTSFromStructure(data, structure) {
+    const index = buildContentIndex(data);
     let output = '';
     let exportedCount = 0;
     let emptyCount = 0;
 
     for (const s of structure) {
-      const sId = String(s.id);
-      const c = normalizeForMatch(s.content);
+      const contentStr = (s.content == null) ? '' : String(s.content);
+      const isEmpty = s.isEmpty === true || contentStr.trim() === '';
 
-      let textToWrite = '';
-      let comment = s.comment || '';
-
-      if (emptySet.has(sId)) {
-        const ownEntry = data ? data[sId] : null;
-        if (ownEntry && ownEntry.wtsComment) comment = s.comment || ownEntry.wtsComment;
-      } else {
-        const ownEntry = data ? data[sId] : null;
-        if (ownEntry && normalizeForMatch(ownEntry.original) === c) {
-          const tr = (ownEntry.translation || '').trim();
-          if (tr !== '') {
-            textToWrite = ownEntry.translation;
-            comment = s.comment || ownEntry.wtsComment || '';
-          }
-        }
-        if (textToWrite === '') {
-          const fallbackKey = translationIndex.get(c);
-          if (fallbackKey) {
-            const fbEntry = data[fallbackKey];
-            textToWrite = fbEntry.translation;
-            comment = s.comment || fbEntry.wtsComment || '';
-          }
-        }
-      }
-
-      output += `STRING ${sId}`;
-      if (comment) output += ` // ${comment}`;
-      if (textToWrite === '') {
-        // Пустая фраза — пробел на отдельной строке, как в примере
+      if (isEmpty) {
+        // Пустая строка — выводим её "как есть"
+        output += `STRING ${s.id}`;
+        if (s.comment) output += ` // ${s.comment}`;
         output += `\n{\n \n}\n\n`;
+        exportedCount++;
         emptyCount++;
-      } else {
-        output += `\n{\n${textToWrite}\n}\n\n`;
+        continue;
       }
+
+      const c = normalizeForMatch(contentStr);
+      const dbKey = index.get(c);
+      if (!dbKey) continue;
+      const entry = data[dbKey];
+      const translation = entry.translation || '';
+      const textToWrite = translation.trim() !== '' ? translation : contentStr.trim();
+      const comment = s.comment || entry.wtsComment || '';
+      output += `STRING ${s.id}`;
+      if (comment) output += ` // ${comment}`;
+      output += `\n{\n${textToWrite}\n}\n\n`;
       exportedCount++;
     }
 
@@ -1660,7 +1625,7 @@
         alert('Нет данных о последнем загруженном файле.\nСначала загрузите .wts с оригинальными фразами.');
         return;
       }
-      const result = generateWTSFromStructure(data, lastImportStructure, emptyStringIds);
+      const result = generateWTSFromStructure(data, lastImportStructure);
       if (result.count === 0) {
         alert('Ни одна фраза из последнего загруженного файла не найдена в базе. Экспорт отменён.');
         return;
@@ -1674,11 +1639,7 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      let msg = `Экспортировано ${result.count} фраз по структуре последнего загруженного файла.`;
-      if (result.emptyCount > 0) {
-        msg += `\n\nПустых фраз (без перевода): ${result.emptyCount}.`;
-      }
-      alert(msg);
+      alert(`Экспортировано ${result.count} фраз (из них пустых: ${result.emptyCount}) по структуре последнего загруженного файла.`);
     });
   }
 
