@@ -1551,7 +1551,7 @@
       if (!dbKey) continue;
       const entry = data[dbKey];
       const translation = entry.translation || '';
-      const textToWrite = translation.trim() !== '' ? translation : s.content;
+      const textToWrite = translation.trim() !== '' ? translation : (s.content || '').trim();
       const comment = s.comment || entry.wtsComment || '';
       output += `STRING ${s.id}`;
       if (comment) output += ` // ${comment}`;
