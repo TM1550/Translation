@@ -373,8 +373,8 @@
     .modal-box .close-btn:hover { color: #333; }
     .modal-box h3 { margin-bottom: 12px; }
     .modal-box .modal-item { margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #eee; }
-    .modal-box .modal-item .modal-original { font-weight: 500; }
-    .modal-box .modal-item .modal-translation { color: #555; font-size: 0.95em; margin-top: 4px; }
+    .modal-box .modal-item .modal-original { font-weight: 500; white-space: pre-wrap; }
+    .modal-box .modal-item .modal-translation { color: #555; font-size: 0.95em; margin-top: 4px; white-space: pre-wrap; }
     .modal-box .modal-item .modal-score { font-size: 0.8em; color: #888; margin-top: 2px; }
     .modal-box .modal-item strong { background: #ffeb3b; padding: 0 2px; border-radius: 2px; }
     .modal-box .modal-item .modal-header { display: flex; justify-content: space-between; }
@@ -705,10 +705,6 @@
     return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
-  function normalizeText(str) {
-    return str.replace(/\s+/g, ' ').trim();
-  }
-
   // ========== ГРУППИРОВКА ==========
   function makePattern(str) {
     if (!str) return '';
@@ -803,7 +799,7 @@
       filtered = filtered.filter(item => hasRussian(item.original));
     }
     if (filterNoTranslation.checked) {
-      filtered = filtered.filter(item => item.translation.trim() === '');
+      filtered = filtered.filter(item => item.translation === '');
     }
     if (filterHideEditorSuffix.checked) {
       filtered = filtered.filter(item => {
@@ -813,7 +809,7 @@
     }
     if (filterUnconfirmed.checked) {
       filtered = filtered.filter(item => {
-        const hasTranslation = item.translation.trim() !== '';
+        const hasTranslation = item.translation !== '';
         return hasTranslation && !item.confirmed;
       });
     }
@@ -851,18 +847,20 @@
     if (!item) return;
     const user = getCurrentUserInfo();
 
-    const isTranslationEmpty = newTranslation.trim() === '';
+    // Обрезаем пробелы/переносы по краям, внутренние переносы сохраняем
+    const trimmedTranslation = (newTranslation || '').trim();
 
     function prepareUpdate(translation, authorUid, authorName) {
+      const trimmed = (translation || '').trim();
       const update = {
-        translation: translation,
+        translation: trimmed,
         translationAuthor: authorUid,
         translationAuthorName: authorName,
         confirmed: false,
         confirmedBy: '',
         confirmedByName: ''
       };
-      if (translation.trim() === '') {
+      if (trimmed === '') {
         update.translationAuthor = '';
         update.translationAuthorName = '';
       }
@@ -877,20 +875,20 @@
         for (const member of members) {
           let memberTranslation;
           if (member.key === key) {
-            memberTranslation = newTranslation;
+            memberTranslation = trimmedTranslation;
           } else {
-            memberTranslation = applyTranslationToMember(newTranslation, member.original);
+            memberTranslation = applyTranslationToMember(trimmedTranslation, member.original);
           }
           const localItem = allData.find(d => d.key === member.key);
           if (localItem) {
             localItem.translation = memberTranslation;
-            localItem.translationAuthor = isTranslationEmpty ? '' : user.uid;
-            localItem.translationAuthorName = isTranslationEmpty ? '' : user.displayName;
+            localItem.translationAuthor = trimmedTranslation === '' ? '' : user.uid;
+            localItem.translationAuthorName = trimmedTranslation === '' ? '' : user.displayName;
             localItem.confirmed = false;
             localItem.confirmedBy = '';
             localItem.confirmedByName = '';
           }
-          updates[member.key] = prepareUpdate(memberTranslation, isTranslationEmpty ? '' : user.uid, isTranslationEmpty ? '' : user.displayName);
+          updates[member.key] = prepareUpdate(memberTranslation, trimmedTranslation === '' ? '' : user.uid, trimmedTranslation === '' ? '' : user.displayName);
         }
         for (const [k, val] of Object.entries(updates)) {
           stringsRef.child(k).update(val).catch(err => alert('Ошибка сохранения для #' + k + ': ' + err.message));
@@ -900,7 +898,7 @@
       }
     }
 
-    const updateData = prepareUpdate(newTranslation, isTranslationEmpty ? '' : user.uid, isTranslationEmpty ? '' : user.displayName);
+    const updateData = prepareUpdate(trimmedTranslation, trimmedTranslation === '' ? '' : user.uid, trimmedTranslation === '' ? '' : user.displayName);
     stringsRef.child(key).update(updateData).catch(err => alert('Ошибка сохранения: ' + err.message));
   }
 
@@ -926,17 +924,21 @@
     const item = allData.find(d => d.key === key);
     if (!item) return;
 
+    // Обрезаем пробелы/переносы по краям — как при импорте
+    const trimmedNew = (newOriginal || '').trim();
     const oldOriginal = item.original || '';
-    if (newOriginal === oldOriginal) {
+    const trimmedOld = oldOriginal.trim();
+
+    if (trimmedNew === trimmedOld) {
       editingOriginalKey = null;
       render();
       return;
     }
 
-    if (newOriginal.trim() === '') {
+    if (trimmedNew === '') {
       if (!confirm('Оригинал станет пустым. При экспорте будет выведена пустая строка. Продолжить?')) return;
     } else {
-      const newNorm = normalizeOriginalForCompare(newOriginal);
+      const newNorm = normalizeOriginalForCompare(trimmedNew);
       const duplicate = allData.find(d => d.key !== key && normalizeOriginalForCompare(d.original) === newNorm);
       if (duplicate) {
         if (!confirm(`Внимание: фраза с таким оригиналом уже существует (#${duplicate.key}). Продолжить?`)) return;
@@ -945,20 +947,20 @@
 
     const structIdx = findStructureIndexForKey(key, oldOriginal);
     const updates = {};
-    updates[`strings/${key}/original`] = newOriginal;
+    updates[`strings/${key}/original`] = trimmedNew;
     if (structIdx >= 0) {
-      updates[`metadata/lastImportStructure/${structIdx}/content`] = newOriginal;
-      updates[`metadata/lastImportStructure/${structIdx}/isEmpty`] = newOriginal.trim() === '';
+      updates[`metadata/lastImportStructure/${structIdx}/content`] = trimmedNew;
+      updates[`metadata/lastImportStructure/${structIdx}/isEmpty`] = trimmedNew === '';
     }
 
     db.ref().update(updates)
       .then(() => {
-        item.original = newOriginal;
+        item.original = trimmedNew;
         if (structIdx >= 0) {
           lastImportStructure[structIdx] = {
             ...lastImportStructure[structIdx],
-            content: newOriginal,
-            isEmpty: newOriginal.trim() === ''
+            content: trimmedNew,
+            isEmpty: trimmedNew === ''
           };
         }
         editingOriginalKey = null;
@@ -1007,7 +1009,7 @@
     for (const entry of allData) {
       if (entry.key === excludeKey) continue;
       if (!entry.confirmed) continue;
-      if (!entry.translation || entry.translation.trim() === '') continue;
+      if (!entry.translation || entry.translation === '') continue;
       if (normalizeOriginalForCompare(entry.original) === currentNormalized) continue;
 
       const entryWords = words(entry.original);
@@ -1122,7 +1124,7 @@
         let confirmedDisplay = '';
         let confirmButton = '';
         if (user.role === 'editor') {
-          const hasTranslation = translation.trim() !== '';
+          const hasTranslation = translation !== '';
           const isConfirmed = confirmed;
           let btnLabel = isConfirmed ? 'Отменить подтверждение' : (hasTranslation ? 'Подтвердить' : 'Нет перевода');
           let btnClass = 'confirm-btn';
@@ -1174,7 +1176,6 @@
 
         const groupDataEncoded = item._groupMembers ? encodeURIComponent(JSON.stringify(item._groupMembers)) : '';
 
-        // === Левая колонка: с поддержкой редактирования оригинала ===
         let leftColHtml;
         if (isEditMode) {
           if (editingOriginalKey === key) {
@@ -1278,7 +1279,6 @@
         btn.removeEventListener('click', handleOriginalCancelClick);
         btn.addEventListener('click', handleOriginalCancelClick);
       });
-      // Ctrl+Enter в поле редактирования оригинала — тоже сохраняет
       container.querySelectorAll('.original-edit-input').forEach(textarea => {
         textarea.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -1290,7 +1290,6 @@
             render();
           }
         });
-        // Автофокус при открытии
         if (editingOriginalKey === textarea.dataset.key) {
           textarea.focus();
         }
@@ -1415,7 +1414,7 @@
     const key = btn.dataset.key;
     const item = allData.find(d => d.key === key);
     if (!item) return;
-    if (item.translation.trim() === '') {
+    if (item.translation === '') {
       alert('Невозможно подтвердить: перевод отсутствует.');
       return;
     }
@@ -1443,6 +1442,7 @@
   }
 
   // ========== ПАРСИНГ WTS ==========
+  // Все строки возвращаются с обрезанным по краям content.
   function parseWTS(text) {
     const regex = /STRING\s+(\d+)\s*(?:\/\/([^\n]*))?\s*\{([\s\S]*?)\}/g;
     const entries = [];
@@ -1450,12 +1450,12 @@
     while ((match = regex.exec(text)) !== null) {
       const number = match[1];
       const comment = (match[2] || '').trim();
-      const content = match[3];
+      const trimmedContent = match[3].trim();   // ← обрезаем
       entries.push({
         number,
         comment,
-        content,
-        isEmpty: content.trim() === ''
+        content: trimmedContent,
+        isEmpty: trimmedContent === ''
       });
     }
     return entries;
@@ -1763,12 +1763,15 @@
     let emptyCount = 0;
 
     for (const s of structure) {
-      const contentStr = (s.content == null) ? '' : String(s.content);
-      const isEmpty = s.isEmpty === true || contentStr.trim() === '';
+      // Обрезаем content на экспорте — даже если в структуре остались "старые" данные
+      const contentStr = ((s.content == null) ? '' : String(s.content)).trim();
+      const isEmpty = s.isEmpty === true || contentStr === '';
+
+      const comment = ((s.comment || '') + '').trim();
 
       if (isEmpty) {
         output += `STRING ${s.id}`;
-        if (s.comment) output += ` // ${s.comment}`;
+        if (comment) output += ` // ${comment}`;
         output += `\n{\n \n}\n\n`;
         exportedCount++;
         emptyCount++;
@@ -1779,11 +1782,12 @@
       const dbKey = index.get(c);
       if (!dbKey) continue;
       const entry = data[dbKey];
-      const translation = entry.translation || '';
-      const textToWrite = translation.trim() !== '' ? translation : contentStr.trim();
-      const comment = s.comment || entry.wtsComment || '';
+      const translation = ((entry.translation || '') + '').trim();
+      const textToWrite = translation !== '' ? translation : contentStr;
+      const entryComment = ((entry.wtsComment || '') + '').trim();
+      const finalComment = comment || entryComment;
       output += `STRING ${s.id}`;
-      if (comment) output += ` // ${comment}`;
+      if (finalComment) output += ` // ${finalComment}`;
       output += `\n{\n${textToWrite}\n}\n\n`;
       exportedCount++;
     }
@@ -1834,11 +1838,12 @@
     let emptyCount = 0;
 
     for (const s of lastImportStructure) {
-      const contentStr = (s.content == null) ? '' : String(s.content);
-      const isEmpty = s.isEmpty === true || contentStr.trim() === '';
+      const contentStr = ((s.content == null) ? '' : String(s.content)).trim();
+      const isEmpty = s.isEmpty === true || contentStr === '';
+      const comment = ((s.comment || '') + '').trim();
 
       output += `STRING ${s.id}`;
-      if (s.comment) output += ` // ${s.comment}`;
+      if (comment) output += ` // ${comment}`;
       if (isEmpty) {
         output += `\n{\n \n}\n\n`;
         emptyCount++;
@@ -2048,17 +2053,16 @@
     if (!data) { allData = []; render(); return; }
     const entries = Object.entries(data).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
     allData = entries.map(([key, entry]) => {
-      let wtsComment = entry.wtsComment || '';
-      let userComments = entry.userComments || [];
-      if (entry.comment && !wtsComment) wtsComment = entry.comment;
+      let rawComment = entry.wtsComment || entry.comment || '';
+      let rawComments = entry.userComments || [];
       return {
         key,
-        original: entry.original || '',
-        translation: entry.translation || '',
+        original: (entry.original || '').trim(),
+        translation: (entry.translation || '').trim(),
         translationAuthor: entry.translationAuthor || '',
         translationAuthorName: entry.translationAuthorName || '',
-        wtsComment: wtsComment,
-        userComments: Array.isArray(userComments) ? userComments : [],
+        wtsComment: (rawComment || '').trim(),
+        userComments: Array.isArray(rawComments) ? rawComments : [],
         confirmed: entry.confirmed || false,
         confirmedBy: entry.confirmedBy || '',
         confirmedByName: entry.confirmedByName || '',
