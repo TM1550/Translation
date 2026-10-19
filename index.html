@@ -95,6 +95,8 @@
     .toolbar button:hover { background: #1565c0; }
     .toolbar .export-btn { background: #2e7d32; }
     .toolbar .export-btn:hover { background: #388e3c; }
+    .toolbar .export-originals-btn { background: #455a64; }
+    .toolbar .export-originals-btn:hover { background: #37474f; }
     .toolbar .import-btn { background: #e65100; }
     .toolbar .import-btn:hover { background: #bf360c; }
     .toolbar .import-translations-wts-btn { background: #4a148c; }
@@ -277,6 +279,28 @@
     .entry .inactive-btn.active:hover { background: #388e3c; }
     .entry .similar-btn { background: #6a1b9a; color: white; border: none; border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 13px; }
     .entry .similar-btn:hover { background: #4a148c; }
+    .entry .original-edit-btn {
+      background: #455a64; color: white; border: none; border-radius: 6px;
+      padding: 4px 10px; cursor: pointer; font-size: 12px; margin-top: 4px; align-self: flex-start;
+    }
+    .entry .original-edit-btn:hover { background: #37474f; }
+    .entry .original-edit-input {
+      width: 100%; padding: 6px 10px; border: 1px solid #cfd8dc; border-radius: 6px;
+      font-size: 14px; font-family: inherit; min-height: 60px; resize: vertical; margin-top: 4px;
+      line-height: 1.4;
+    }
+    .entry .original-edit-input:focus { border-color: #455a64; outline: none; }
+    .entry .original-edit-buttons { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+    .entry .original-save-btn {
+      background: #2e7d32; color: white; border: none; border-radius: 6px;
+      padding: 4px 12px; cursor: pointer; font-size: 13px;
+    }
+    .entry .original-save-btn:hover { background: #1b5e20; }
+    .entry .original-cancel-btn {
+      background: #9e9e9e; color: white; border: none; border-radius: 6px;
+      padding: 4px 12px; cursor: pointer; font-size: 13px;
+    }
+    .entry .original-cancel-btn:hover { background: #757575; }
     .entry .comment-section {
       grid-column: 1 / -1;
       margin-top: 6px;
@@ -386,7 +410,12 @@
     <label style="display:inline-flex;align-items:center;gap:4px;font-size:14px;background:#e0f2f1;padding:4px 12px;border-radius:20px;cursor:pointer;" title="Если отмечено — загруженные переводы будут помечены как подтверждённые">
       <input type="checkbox" id="confirmImportedTranslations"> Подтвердить импорт
     </label>
-    <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts</button>
+    <button class="export-btn" id="exportBtn" style="display:none;">⬇ Скачать .wts (переводы)</button>
+    <button class="export-originals-btn" id="exportOriginalsBtn" style="display:none;">⬇ Скачать .wts (оригиналы)</button>
+
+    <label id="editOriginalModeLabel" style="display:none;align-items:center;gap:4px;font-size:14px;background:#eceff1;padding:4px 12px;border-radius:20px;cursor:pointer;" title="Показывать кнопки редактирования оригинальных фраз">
+      <input type="checkbox" id="editOriginalMode"> ✏️ Редактирование оригинала
+    </label>
 
     <button class="db-download-btn" id="dbDownloadBtn" style="display:none;">💾 Скачать БД</button>
     <button class="db-restore-btn" id="dbRestoreBtn" style="display:none;">📤 Восстановить БД</button>
@@ -477,6 +506,9 @@
   const translationsWtsInput = document.getElementById('translationsWtsInput');
   const confirmImportedTranslations = document.getElementById('confirmImportedTranslations');
   const exportBtn = document.getElementById('exportBtn');
+  const exportOriginalsBtn = document.getElementById('exportOriginalsBtn');
+  const editOriginalModeCheckbox = document.getElementById('editOriginalMode');
+  const editOriginalModeLabel = document.getElementById('editOriginalModeLabel');
   const refreshBtn = document.getElementById('refreshBtn');
   const filterOnlyRussian = document.getElementById('filterOnlyRussian');
   const filterNoTranslation = document.getElementById('filterNoTranslation');
@@ -524,6 +556,7 @@
   let importedNumbers = [];
   let lastImportStructure = [];
   let emptyStringIds = [];
+  let editingOriginalKey = null;
 
   // ========== АВТОРИЗАЦИЯ ==========
   function isAuthSupported() {
@@ -561,6 +594,8 @@
       currentDisplayName = '';
       currentUserRole = 'translator';
       currentUserCanManageDb = false;
+      editingOriginalKey = null;
+      editOriginalModeCheckbox.checked = false;
       userInfo.textContent = 'Не авторизован';
       roleBadge.style.display = 'none';
       adminBadge.style.display = 'none';
@@ -570,6 +605,8 @@
       importBtn.style.display = 'none';
       importTranslationsWtsBtn.style.display = 'none';
       exportBtn.style.display = 'none';
+      exportOriginalsBtn.style.display = 'none';
+      editOriginalModeLabel.style.display = 'none';
       confirmImportedTranslations.closest('label').style.display = 'none';
       dbDownloadBtn.style.display = 'none';
       dbRestoreBtn.style.display = 'none';
@@ -592,11 +629,17 @@
       importBtn.style.display = 'inline-block';
       importTranslationsWtsBtn.style.display = 'inline-block';
       exportBtn.style.display = 'inline-block';
+      exportOriginalsBtn.style.display = 'inline-block';
+      editOriginalModeLabel.style.display = 'inline-flex';
       confirmImportedTranslations.closest('label').style.display = 'inline-flex';
     } else {
       importBtn.style.display = 'none';
       importTranslationsWtsBtn.style.display = 'none';
       exportBtn.style.display = 'none';
+      exportOriginalsBtn.style.display = 'none';
+      editOriginalModeLabel.style.display = 'none';
+      editOriginalModeCheckbox.checked = false;
+      editingOriginalKey = null;
       confirmImportedTranslations.closest('label').style.display = 'none';
     }
 
@@ -861,6 +904,69 @@
     stringsRef.child(key).update(updateData).catch(err => alert('Ошибка сохранения: ' + err.message));
   }
 
+  // ========== РЕДАКТИРОВАНИЕ ОРИГИНАЛА ==========
+  function findStructureIndexForKey(key, oldContent) {
+    for (let i = 0; i < lastImportStructure.length; i++) {
+      if (String(lastImportStructure[i].id) === String(key)) return i;
+    }
+    const normOld = normalizeOriginalForCompare(oldContent);
+    for (let i = 0; i < lastImportStructure.length; i++) {
+      if (normalizeOriginalForCompare(lastImportStructure[i].content) === normOld) return i;
+    }
+    return -1;
+  }
+
+  function saveOriginalEdit(key, newOriginal) {
+    const user = getCurrentUserInfo();
+    if (user.role !== 'editor') {
+      alert('Только редакторы могут изменять оригинальные фразы.');
+      return;
+    }
+
+    const item = allData.find(d => d.key === key);
+    if (!item) return;
+
+    const oldOriginal = item.original || '';
+    if (newOriginal === oldOriginal) {
+      editingOriginalKey = null;
+      render();
+      return;
+    }
+
+    if (newOriginal.trim() === '') {
+      if (!confirm('Оригинал станет пустым. При экспорте будет выведена пустая строка. Продолжить?')) return;
+    } else {
+      const newNorm = normalizeOriginalForCompare(newOriginal);
+      const duplicate = allData.find(d => d.key !== key && normalizeOriginalForCompare(d.original) === newNorm);
+      if (duplicate) {
+        if (!confirm(`Внимание: фраза с таким оригиналом уже существует (#${duplicate.key}). Продолжить?`)) return;
+      }
+    }
+
+    const structIdx = findStructureIndexForKey(key, oldOriginal);
+    const updates = {};
+    updates[`strings/${key}/original`] = newOriginal;
+    if (structIdx >= 0) {
+      updates[`metadata/lastImportStructure/${structIdx}/content`] = newOriginal;
+      updates[`metadata/lastImportStructure/${structIdx}/isEmpty`] = newOriginal.trim() === '';
+    }
+
+    db.ref().update(updates)
+      .then(() => {
+        item.original = newOriginal;
+        if (structIdx >= 0) {
+          lastImportStructure[structIdx] = {
+            ...lastImportStructure[structIdx],
+            content: newOriginal,
+            isEmpty: newOriginal.trim() === ''
+          };
+        }
+        editingOriginalKey = null;
+        render();
+      })
+      .catch(err => alert('Ошибка сохранения оригинала: ' + err.message));
+  }
+
   // ========== НЕАКТИВНОСТЬ ==========
   function toggleInactive(key) {
     const item = allData.find(d => d.key === key);
@@ -989,8 +1095,10 @@
         return;
       }
 
-      let html = '';
       const user = getCurrentUserInfo();
+      const isEditMode = editOriginalModeCheckbox.checked && user.role === 'editor';
+
+      let html = '';
       for (const item of pageItems) {
         const key = item.key;
         const original = item.original || '';
@@ -1066,13 +1174,40 @@
 
         const groupDataEncoded = item._groupMembers ? encodeURIComponent(JSON.stringify(item._groupMembers)) : '';
 
-        const leftColHtml = `
-          <div class="left-col">
-            <div class="meta">#${key}</div>
-            <div class="original">${escapeHtml(original)}</div>
-            ${groupInfo ? `<div class="group-info">${groupInfo}</div>` : ''}
-          </div>
-        `;
+        // === Левая колонка: с поддержкой редактирования оригинала ===
+        let leftColHtml;
+        if (isEditMode) {
+          if (editingOriginalKey === key) {
+            leftColHtml = `
+              <div class="left-col">
+                <div class="meta">#${key}</div>
+                <textarea class="original-edit-input" data-key="${safeKey}" rows="3">${escapeHtml(original)}</textarea>
+                <div class="original-edit-buttons">
+                  <button class="original-save-btn" data-key="${safeKey}">💾 Сохранить</button>
+                  <button class="original-cancel-btn" data-key="${safeKey}">✖ Отмена</button>
+                </div>
+                ${groupInfo ? `<div class="group-info">${groupInfo}</div>` : ''}
+              </div>
+            `;
+          } else {
+            leftColHtml = `
+              <div class="left-col">
+                <div class="meta">#${key}</div>
+                <div class="original">${escapeHtml(original)}</div>
+                <button class="original-edit-btn" data-key="${safeKey}">✏️ Изменить оригинал</button>
+                ${groupInfo ? `<div class="group-info">${groupInfo}</div>` : ''}
+              </div>
+            `;
+          }
+        } else {
+          leftColHtml = `
+            <div class="left-col">
+              <div class="meta">#${key}</div>
+              <div class="original">${escapeHtml(original)}</div>
+              ${groupInfo ? `<div class="group-info">${groupInfo}</div>` : ''}
+            </div>
+          `;
+        }
 
         const rightColHtml = `
           <div class="right-col">
@@ -1131,6 +1266,35 @@
         btn.removeEventListener('click', handleSimilar);
         btn.addEventListener('click', handleSimilar);
       });
+      container.querySelectorAll('.original-edit-btn').forEach(btn => {
+        btn.removeEventListener('click', handleOriginalEditClick);
+        btn.addEventListener('click', handleOriginalEditClick);
+      });
+      container.querySelectorAll('.original-save-btn').forEach(btn => {
+        btn.removeEventListener('click', handleOriginalSaveClick);
+        btn.addEventListener('click', handleOriginalSaveClick);
+      });
+      container.querySelectorAll('.original-cancel-btn').forEach(btn => {
+        btn.removeEventListener('click', handleOriginalCancelClick);
+        btn.addEventListener('click', handleOriginalCancelClick);
+      });
+      // Ctrl+Enter в поле редактирования оригинала — тоже сохраняет
+      container.querySelectorAll('.original-edit-input').forEach(textarea => {
+        textarea.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            saveOriginalEdit(textarea.dataset.key, textarea.value);
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            editingOriginalKey = null;
+            render();
+          }
+        });
+        // Автофокус при открытии
+        if (editingOriginalKey === textarea.dataset.key) {
+          textarea.focus();
+        }
+      });
     } catch (err) {
       console.error('Ошибка при рендеринге:', err);
       container.innerHTML = `<div class="loader" style="color:#c62828;">Ошибка отображения: ${err.message}</div>`;
@@ -1158,6 +1322,25 @@
   function handleInactiveToggle(e) { toggleInactive(e.currentTarget.dataset.key); }
 
   function handleSimilar(e) { showSimilarTranslations(e.currentTarget.dataset.key); }
+
+  function handleOriginalEditClick(e) {
+    editingOriginalKey = e.currentTarget.dataset.key;
+    render();
+  }
+
+  function handleOriginalSaveClick(e) {
+    const btn = e.currentTarget;
+    const key = btn.dataset.key;
+    const entry = btn.closest('.entry');
+    const textarea = entry.querySelector('.original-edit-input');
+    if (!textarea) return;
+    saveOriginalEdit(key, textarea.value);
+  }
+
+  function handleOriginalCancelClick() {
+    editingOriginalKey = null;
+    render();
+  }
 
   function handleCommentSave(e) {
     const btn = e.currentTarget;
@@ -1260,7 +1443,6 @@
   }
 
   // ========== ПАРСИНГ WTS ==========
-  // Возвращает все строки, включая пустые (с флагом isEmpty)
   function parseWTS(text) {
     const regex = /STRING\s+(\d+)\s*(?:\/\/([^\n]*))?\s*\{([\s\S]*?)\}/g;
     const entries = [];
@@ -1286,8 +1468,8 @@
       try {
         const text = e.target.result;
         const allParsed = parseWTS(text);
-        const parsed = allParsed.filter(p => !p.isEmpty);      // непустые
-        const emptyParsed = allParsed.filter(p => p.isEmpty);  // пустые
+        const parsed = allParsed.filter(p => !p.isEmpty);
+        const emptyParsed = allParsed.filter(p => p.isEmpty);
 
         if (allParsed.length === 0) {
           alert('Не удалось найти ни одной строки STRING в файле.');
@@ -1324,7 +1506,6 @@
           finalMap.set(item.key, { ...item });
         }
 
-        // Резервируем ID ВСЕХ строк из файла, включая пустые
         const reservedIds = new Set();
         for (const p of allParsed) reservedIds.add(String(p.number));
 
@@ -1403,10 +1584,8 @@
 
         stringsRef.update(updates)
           .then(() => {
-            // importedNumbers — только непустые
             const numbers = parsed.map(item => item.number);
 
-            // Структура файла целиком (с сохранением порядка), включая пустые
             const structure = allParsed.map(item => ({
               id: String(item.number),
               content: item.content,
@@ -1414,7 +1593,6 @@
               isEmpty: item.isEmpty === true
             }));
 
-            // Явный список ID пустых строк
             const emptyIds = emptyParsed.map(item => String(item.number));
 
             metadataRef.set({
@@ -1577,7 +1755,7 @@
     this.value = '';
   });
 
-  // ========== ЭКСПОРТ ==========
+  // ========== ЭКСПОРТ ПЕРЕВОДОВ ==========
   function generateWTSFromStructure(data, structure) {
     const index = buildContentIndex(data);
     let output = '';
@@ -1589,7 +1767,6 @@
       const isEmpty = s.isEmpty === true || contentStr.trim() === '';
 
       if (isEmpty) {
-        // Пустая строка — выводим её "как есть"
         output += `STRING ${s.id}`;
         if (s.comment) output += ` // ${s.comment}`;
         output += `\n{\n \n}\n\n`;
@@ -1644,6 +1821,59 @@
   }
 
   exportBtn.addEventListener('click', exportWTS);
+
+  // ========== ЭКСПОРТ ОРИГИНАЛОВ ==========
+  function exportOriginalsWTS() {
+    if (!lastImportStructure || lastImportStructure.length === 0) {
+      alert('Нет данных о последнем загруженном файле.\nСначала загрузите .wts с оригинальными фразами.');
+      return;
+    }
+
+    let output = '';
+    let count = 0;
+    let emptyCount = 0;
+
+    for (const s of lastImportStructure) {
+      const contentStr = (s.content == null) ? '' : String(s.content);
+      const isEmpty = s.isEmpty === true || contentStr.trim() === '';
+
+      output += `STRING ${s.id}`;
+      if (s.comment) output += ` // ${s.comment}`;
+      if (isEmpty) {
+        output += `\n{\n \n}\n\n`;
+        emptyCount++;
+      } else {
+        output += `\n{\n${contentStr}\n}\n\n`;
+      }
+      count++;
+    }
+
+    if (count === 0) {
+      alert('Нет данных для экспорта.');
+      return;
+    }
+
+    const blob = new Blob([output], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'original_strings.wts';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    alert(`Экспортировано ${count} строк оригиналов (из них пустых: ${emptyCount}).`);
+  }
+
+  exportOriginalsBtn.addEventListener('click', exportOriginalsWTS);
+
+  // ========== РЕЖИМ РЕДАКТИРОВАНИЯ ОРИГИНАЛА ==========
+  editOriginalModeCheckbox.addEventListener('change', () => {
+    if (!editOriginalModeCheckbox.checked) {
+      editingOriginalKey = null;
+    }
+    render();
+  });
 
   // ========== СКАЧИВАНИЕ БД ==========
   function downloadDatabase() {
