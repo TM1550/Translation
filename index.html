@@ -1440,24 +1440,27 @@
   }
 
   // ========== ПАРСИНГ WTS ==========
-  // Поддерживает два формата комментария:
-  //   а) STRING 123 // comment { ... }         (inline после ID — оригинальный формат WTS)
-  //   б) // comment \n STRING 123 \n { ... }   (комментарий на отдельной строке перед STRING — формат нашего экспорта)
-  // При наличии обоих приоритет у префиксного (вариант б). Срезает BOM в начале.
+  // Поддерживает три формата комментария:
+  //   а) // comment \n STRING 123 \n { ... }   — префикс (наша старая версия экспорта)
+  //   б) STRING 123 // comment \n { ... }      — inline (родной формат WTS/World Editor)
+  //   в) STRING 123 \n // comment \n { ... }   — постфикс (текущий формат экспорта)
+  // При наличии нескольких приоритет: постфикс > inline > префикс.
+  // Срезает BOM в начале файла, если он есть.
   function parseWTS(text) {
     if (text && text.charCodeAt(0) === 0xFEFF) {
       text = text.slice(1);
     }
 
-    const regex = /(?:\/\/[ \t]*([^\n]*?)[ \t]*\r?\n[ \t]*)?STRING[ \t]+(\d+)[ \t]*(?:\/\/[ \t]*([^\n]*?)[ \t]*)?\r?\n?[ \t]*\{([\s\S]*?)\}/g;
+    const regex = /(?:\/\/[ \t]*([^\n]*)[ \t]*\r?\n[ \t]*)?STRING[ \t]+(\d+)(?:[ \t]*\/\/[ \t]*([^\n]*))?[ \t]*(?:\r?\n[ \t]*\/\/[ \t]*([^\n]*))?[ \t]*\r?\n?[ \t]*\{([\s\S]*?)\}/g;
     const entries = [];
     let match;
     while ((match = regex.exec(text)) !== null) {
-      const commentBefore = match[1];
+      const commentPrefix = match[1];
       const number = match[2];
-      const commentAfter = match[3];
-      const content = match[4];
-      const comment = (commentBefore || commentAfter || '').trim();
+      const commentInline = match[3];
+      const commentPostfix = match[4];
+      const content = match[5];
+      const comment = (commentPostfix || commentInline || commentPrefix || '').trim();
       const trimmedContent = content.trim();
       entries.push({
         number,
@@ -1764,6 +1767,7 @@
   });
 
   // ========== ЭКСПОРТ ПЕРЕВОДОВ ==========
+  // Формат: STRING <id> // <comment> \n { ... } — комментарий на отдельной строке после STRING.
   function generateWTSFromStructure(data, structure) {
     const index = buildContentIndex(data);
     let output = '';
@@ -1773,12 +1777,11 @@
     for (const s of structure) {
       const contentStr = ((s.content == null) ? '' : String(s.content)).trim();
       const isEmpty = s.isEmpty === true || contentStr === '';
-      const comment = ((s.comment || '') + '').trim();
-
-      if (comment) output += `// ${comment}\n`;
 
       if (isEmpty) {
-        output += `STRING ${s.id}\n{\n \n}\n\n`;
+        const comment = ((s.comment || '') + '').trim();
+        const commentPart = comment ? ` \n// ${comment}` : '';
+        output += `STRING ${s.id}${commentPart}\n{\n \n}\n\n`;
         exportedCount++;
         emptyCount++;
         continue;
@@ -1790,11 +1793,10 @@
       const entry = data[dbKey];
       const translation = ((entry.translation || '') + '').trim();
       const textToWrite = translation !== '' ? translation : contentStr;
-      const entryComment = ((entry.wtsComment || '') + '').trim();
-      const finalComment = comment || entryComment;
-      if (finalComment && finalComment !== comment) output += `// ${finalComment}\n`;
+      const comment = ((s.comment || entry.wtsComment || '') + '').trim();
+      const commentPart = comment ? ` \n// ${comment}` : '';
 
-      output += `STRING ${s.id}\n{\n${textToWrite}\n}\n\n`;
+      output += `STRING ${s.id}${commentPart}\n{\n${textToWrite}\n}\n\n`;
       exportedCount++;
     }
 
@@ -1818,7 +1820,6 @@
         return;
       }
 
-      // UTF-8 с BOM: \uFEFF в начале строки при UTF-8-кодировании даёт байты EF BB BF
       const textWithBom = '\uFEFF' + result.text;
       const blob = new Blob([textWithBom], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -1850,14 +1851,13 @@
       const contentStr = ((s.content == null) ? '' : String(s.content)).trim();
       const isEmpty = s.isEmpty === true || contentStr === '';
       const comment = ((s.comment || '') + '').trim();
-
-      if (comment) output += `// ${comment}\n`;
+      const commentPart = comment ? ` \n// ${comment}` : '';
 
       if (isEmpty) {
-        output += `STRING ${s.id}\n{\n \n}\n\n`;
+        output += `STRING ${s.id}${commentPart}\n{\n \n}\n\n`;
         emptyCount++;
       } else {
-        output += `STRING ${s.id}\n{\n${contentStr}\n}\n\n`;
+        output += `STRING ${s.id}${commentPart}\n{\n${contentStr}\n}\n\n`;
       }
       count++;
     }
@@ -1867,7 +1867,6 @@
       return;
     }
 
-    // UTF-8 с BOM: \uFEFF в начале строки при UTF-8-кодировании даёт байты EF BB BF
     const textWithBom = '\uFEFF' + output;
     const blob = new Blob([textWithBom], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
