@@ -558,6 +558,13 @@
   let emptyStringIds = [];
   let editingOriginalKey = null;
 
+  // ========== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ CRLF ==========
+  function normalizeLineEndings(str) {
+    if (!str) return '';
+    // Заменяем любые варианты переносов (LF или CR) на CRLF
+    return str.replace(/\r\n|\r|\n/g, '\n').replace(/\n/g, '\r\n');
+  }
+
   // ========== АВТОРИЗАЦИЯ ==========
   function isAuthSupported() {
     try {
@@ -1440,12 +1447,6 @@
   }
 
   // ========== ПАРСИНГ WTS ==========
-  // Поддерживает три формата комментария:
-  //   а) // comment \n STRING 123 \n { ... }   — префикс (наша старая версия экспорта)
-  //   б) STRING 123 // comment \n { ... }      — inline (родной формат WTS/World Editor)
-  //   в) STRING 123 \n // comment \n { ... }   — постфикс (текущий формат экспорта)
-  // При наличии нескольких приоритет: постфикс > inline > префикс.
-  // Срезает BOM в начале файла, если он есть.
   function parseWTS(text) {
     if (text && text.charCodeAt(0) === 0xFEFF) {
       text = text.slice(1);
@@ -1767,7 +1768,6 @@
   });
 
   // ========== ЭКСПОРТ ПЕРЕВОДОВ ==========
-  // Формат: STRING <id> // <comment> \n { ... } — комментарий на отдельной строке после STRING.
   function generateWTSFromStructure(data, structure) {
     const index = buildContentIndex(data);
     let output = '';
@@ -1780,8 +1780,9 @@
 
       if (isEmpty) {
         const comment = ((s.comment || '') + '').trim();
-        const commentPart = comment ? ` \n// ${comment}` : '';
-        output += `STRING ${s.id}${commentPart}\n{\n \n}\n\n`;
+        // Используем \r\n для Warcraft 3
+        const commentPart = comment ? ` \r\n// ${comment}` : '';
+        output += `STRING ${s.id}${commentPart}\r\n{\r\n \r\n}\r\n\r\n`;
         exportedCount++;
         emptyCount++;
         continue;
@@ -1792,11 +1793,15 @@
       if (!dbKey) continue;
       const entry = data[dbKey];
       const translation = ((entry.translation || '') + '').trim();
-      const textToWrite = translation !== '' ? translation : contentStr;
+      
+      // Принудительно заменяем переносы в самом тексте на CRLF
+      const rawText = translation !== '' ? translation : contentStr;
+      const textToWrite = normalizeLineEndings(rawText);
+      
       const comment = ((s.comment || entry.wtsComment || '') + '').trim();
-      const commentPart = comment ? ` \n// ${comment}` : '';
+      const commentPart = comment ? ` \r\n// ${comment}` : '';
 
-      output += `STRING ${s.id}${commentPart}\n{\n${textToWrite}\n}\n\n`;
+      output += `STRING ${s.id}${commentPart}\r\n{\r\n${textToWrite}\r\n}\r\n\r\n`;
       exportedCount++;
     }
 
@@ -1830,7 +1835,7 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      alert(`Экспортировано ${result.count} фраз (из них пустых: ${result.emptyCount}) по структуре последнего загруженного файла.\nКодировка: UTF-8 с BOM.`);
+      alert(`Экспортировано ${result.count} фраз (из них пустых: ${result.emptyCount}) по структуре последнего загруженного файла.\nКодировка: UTF-8 с BOM. Переносы строк: CRLF.`);
     });
   }
 
@@ -1851,13 +1856,16 @@
       const contentStr = ((s.content == null) ? '' : String(s.content)).trim();
       const isEmpty = s.isEmpty === true || contentStr === '';
       const comment = ((s.comment || '') + '').trim();
-      const commentPart = comment ? ` \n// ${comment}` : '';
+      // Используем \r\n для Warcraft 3
+      const commentPart = comment ? ` \r\n// ${comment}` : '';
 
       if (isEmpty) {
-        output += `STRING ${s.id}${commentPart}\n{\n \n}\n\n`;
+        output += `STRING ${s.id}${commentPart}\r\n{\r\n \r\n}\r\n\r\n`;
         emptyCount++;
       } else {
-        output += `STRING ${s.id}${commentPart}\n{\n${contentStr}\n}\n\n`;
+        // Принудительно заменяем переносы в тексте на CRLF
+        const normalizedContent = normalizeLineEndings(contentStr);
+        output += `STRING ${s.id}${commentPart}\r\n{\r\n${normalizedContent}\r\n}\r\n\r\n`;
       }
       count++;
     }
@@ -1877,7 +1885,7 @@
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    alert(`Экспортировано ${count} строк оригиналов (из них пустых: ${emptyCount}).\nКодировка: UTF-8 с BOM.`);
+    alert(`Экспортировано ${count} строк оригиналов (из них пустых: ${emptyCount}).\nКодировка: UTF-8 с BOM. Переносы строк: CRLF.`);
   }
 
   exportOriginalsBtn.addEventListener('click', exportOriginalsWTS);
