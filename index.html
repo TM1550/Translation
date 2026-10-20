@@ -1443,8 +1443,12 @@
   // Поддерживает два формата комментария:
   //   а) STRING 123 // comment { ... }         (inline после ID — оригинальный формат WTS)
   //   б) // comment \n STRING 123 \n { ... }   (комментарий на отдельной строке перед STRING — формат нашего экспорта)
-  // При наличии обоих приоритет у префиксного (вариант б).
+  // При наличии обоих приоритет у префиксного (вариант б). Срезает BOM в начале.
   function parseWTS(text) {
+    if (text && text.charCodeAt(0) === 0xFEFF) {
+      text = text.slice(1);
+    }
+
     const regex = /(?:\/\/[ \t]*([^\n]*?)[ \t]*\r?\n[ \t]*)?STRING[ \t]+(\d+)[ \t]*(?:\/\/[ \t]*([^\n]*?)[ \t]*)?\r?\n?[ \t]*\{([\s\S]*?)\}/g;
     const entries = [];
     let match;
@@ -1771,7 +1775,6 @@
       const isEmpty = s.isEmpty === true || contentStr === '';
       const comment = ((s.comment || '') + '').trim();
 
-      // Комментарий — отдельной строкой ПЕРЕД STRING
       if (comment) output += `// ${comment}\n`;
 
       if (isEmpty) {
@@ -1814,7 +1817,10 @@
         alert('Ни одна фраза из последнего загруженного файла не найдена в базе. Экспорт отменён.');
         return;
       }
-      const blob = new Blob([result.text], { type: 'text/plain;charset=utf-8' });
+
+      // UTF-8 с BOM: \uFEFF в начале строки при UTF-8-кодировании даёт байты EF BB BF
+      const textWithBom = '\uFEFF' + result.text;
+      const blob = new Blob([textWithBom], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -1823,7 +1829,7 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      alert(`Экспортировано ${result.count} фраз (из них пустых: ${result.emptyCount}) по структуре последнего загруженного файла.`);
+      alert(`Экспортировано ${result.count} фраз (из них пустых: ${result.emptyCount}) по структуре последнего загруженного файла.\nКодировка: UTF-8 с BOM.`);
     });
   }
 
@@ -1845,7 +1851,6 @@
       const isEmpty = s.isEmpty === true || contentStr === '';
       const comment = ((s.comment || '') + '').trim();
 
-      // Комментарий — отдельной строкой ПЕРЕД STRING
       if (comment) output += `// ${comment}\n`;
 
       if (isEmpty) {
@@ -1862,7 +1867,9 @@
       return;
     }
 
-    const blob = new Blob([output], { type: 'text/plain;charset=utf-8' });
+    // UTF-8 с BOM: \uFEFF в начале строки при UTF-8-кодировании даёт байты EF BB BF
+    const textWithBom = '\uFEFF' + output;
+    const blob = new Blob([textWithBom], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1871,7 +1878,7 @@
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    alert(`Экспортировано ${count} строк оригиналов (из них пустых: ${emptyCount}).`);
+    alert(`Экспортировано ${count} строк оригиналов (из них пустых: ${emptyCount}).\nКодировка: UTF-8 с BOM.`);
   }
 
   exportOriginalsBtn.addEventListener('click', exportOriginalsWTS);
