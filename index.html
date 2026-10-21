@@ -1780,8 +1780,8 @@
 
       if (isEmpty) {
         const comment = ((s.comment || '') + '').trim();
-        // Используем \r\n для Warcraft 3
-        const commentPart = comment ? ` \r\n// ${comment}` : '';
+        // Используем \r\n для Warcraft 3. Убран лишний пробел после STRING ID
+        const commentPart = comment ? `\r\n// ${comment}` : '';
         output += `STRING ${s.id}${commentPart}\r\n{\r\n \r\n}\r\n\r\n`;
         exportedCount++;
         emptyCount++;
@@ -1799,7 +1799,8 @@
       const textToWrite = normalizeLineEndings(rawText);
       
       const comment = ((s.comment || entry.wtsComment || '') + '').trim();
-      const commentPart = comment ? ` \r\n// ${comment}` : '';
+      // Убран лишний пробел после STRING ID
+      const commentPart = comment ? `\r\n// ${comment}` : '';
 
       output += `STRING ${s.id}${commentPart}\r\n{\r\n${textToWrite}\r\n}\r\n\r\n`;
       exportedCount++;
@@ -1856,8 +1857,8 @@
       const contentStr = ((s.content == null) ? '' : String(s.content)).trim();
       const isEmpty = s.isEmpty === true || contentStr === '';
       const comment = ((s.comment || '') + '').trim();
-      // Используем \r\n для Warcraft 3
-      const commentPart = comment ? ` \r\n// ${comment}` : '';
+      // Используем \r\n для Warcraft 3. Убран лишний пробел после STRING ID
+      const commentPart = comment ? `\r\n// ${comment}` : '';
 
       if (isEmpty) {
         output += `STRING ${s.id}${commentPart}\r\n{\r\n \r\n}\r\n\r\n`;
