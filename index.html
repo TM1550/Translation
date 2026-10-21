@@ -561,8 +561,18 @@
   // ========== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ CRLF ==========
   function normalizeLineEndings(str) {
     if (!str) return '';
-    // Заменяем любые варианты переносов (LF или CR) на CRLF
     return str.replace(/\r\n|\r|\n/g, '\n').replace(/\n/g, '\r\n');
+  }
+
+  // Убирает невидимые символы и хвостовые пробелы — используется перед выводом STRING в WTS
+  function cleanId(rawId) {
+    return String(rawId == null ? '' : rawId).replace(/[\s\u00A0]+/g, '');
+  }
+  function cleanComment(rawComment) {
+    return String(rawComment == null ? '' : rawComment)
+      .replace(/[\u00A0]/g, ' ')
+      .replace(/[\r\n]+/g, ' ')
+      .trim();
   }
 
   // ========== АВТОРИЗАЦИЯ ==========
@@ -1768,6 +1778,11 @@
   });
 
   // ========== ЭКСПОРТ ПЕРЕВОДОВ ==========
+  //
+  // ВАЖНО: формат вывода для каждой строки:
+  //   STRING <id>[ \r\n// <comment>]\r\n{\r\n<content>\r\n}\r\n\r\n
+  //   — после <id> НЕТ пробела. Пробел только между "STRING" и <id>.
+  //
   function generateWTSFromStructure(data, structure) {
     const index = buildContentIndex(data);
     let output = '';
@@ -1775,14 +1790,18 @@
     let emptyCount = 0;
 
     for (const s of structure) {
+      const idClean = cleanId(s.id);                       // ID без пробелов
       const contentStr = ((s.content == null) ? '' : String(s.content)).trim();
       const isEmpty = s.isEmpty === true || contentStr === '';
 
+      // Хвостовик: 'STRING 2230' (без завершающего пробела) + при необходимости комментарий
+      const comment = cleanComment(s.comment || '');
+      const commentPart = comment ? `\r\n// ${comment}` : '';
+      const header = `STRING ${idClean}${commentPart}`;
+
       if (isEmpty) {
-        const comment = ((s.comment || '') + '').trim();
-        // Используем \r\n для Warcraft 3. Убран лишний пробел после STRING ID
-        const commentPart = comment ? `\r\n// ${comment}` : '';
-        output += `STRING ${s.id}${commentPart}\r\n{\r\n \r\n}\r\n\r\n`;
+        // Пустая строка: { \r\n } внутри — без лишних пробелов перед CRLF
+        output += `${header}\r\n{\r\n}\r\n\r\n`;
         exportedCount++;
         emptyCount++;
         continue;
@@ -1793,16 +1812,11 @@
       if (!dbKey) continue;
       const entry = data[dbKey];
       const translation = ((entry.translation || '') + '').trim();
-      
-      // Принудительно заменяем переносы в самом тексте на CRLF
+
       const rawText = translation !== '' ? translation : contentStr;
       const textToWrite = normalizeLineEndings(rawText);
-      
-      const comment = ((s.comment || entry.wtsComment || '') + '').trim();
-      // Убран лишний пробел после STRING ID
-      const commentPart = comment ? `\r\n// ${comment}` : '';
 
-      output += `STRING ${s.id}${commentPart}\r\n{\r\n${textToWrite}\r\n}\r\n\r\n`;
+      output += `${header}\r\n{\r\n${textToWrite}\r\n}\r\n\r\n`;
       exportedCount++;
     }
 
@@ -1843,6 +1857,9 @@
   exportBtn.addEventListener('click', exportWTS);
 
   // ========== ЭКСПОРТ ОРИГИНАЛОВ ==========
+  //
+  // Тот же принцип — никаких пробелов после STRING <id>.
+  //
   function exportOriginalsWTS() {
     if (!lastImportStructure || lastImportStructure.length === 0) {
       alert('Нет данных о последнем загруженном файле.\nСначала загрузите .wts с оригинальными фразами.');
@@ -1854,19 +1871,19 @@
     let emptyCount = 0;
 
     for (const s of lastImportStructure) {
+      const idClean = cleanId(s.id);
       const contentStr = ((s.content == null) ? '' : String(s.content)).trim();
       const isEmpty = s.isEmpty === true || contentStr === '';
-      const comment = ((s.comment || '') + '').trim();
-      // Используем \r\n для Warcraft 3. Убран лишний пробел после STRING ID
+      const comment = cleanComment(s.comment || '');
       const commentPart = comment ? `\r\n// ${comment}` : '';
+      const header = `STRING ${idClean}${commentPart}`;
 
       if (isEmpty) {
-        output += `STRING ${s.id}${commentPart}\r\n{\r\n \r\n}\r\n\r\n`;
+        output += `${header}\r\n{\r\n}\r\n\r\n`;
         emptyCount++;
       } else {
-        // Принудительно заменяем переносы в тексте на CRLF
         const normalizedContent = normalizeLineEndings(contentStr);
-        output += `STRING ${s.id}${commentPart}\r\n{\r\n${normalizedContent}\r\n}\r\n\r\n`;
+        output += `${header}\r\n{\r\n${normalizedContent}\r\n}\r\n\r\n`;
       }
       count++;
     }
