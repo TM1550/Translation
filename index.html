@@ -558,11 +558,14 @@
   let emptyStringIds = [];
   let editingOriginalKey = null;
 
-  // ========== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ CRLF ==========
-  function normalizeLineEndings(str) {
+  // ========== ФУНКЦИЯ ДЛЯ УДАЛЕНИЯ ТОЛЬКО ЛИШНИХ ПЕРЕНОСОВ И КОНВЕРТАЦИИ В CRLF ==========
+  function formatExportText(str) {
     if (!str) return '';
-    // Заменяем любые варианты переносов (LF или CR) на CRLF
-    return str.replace(/\r\n|\r|\n/g, '\n').replace(/\n/g, '\r\n');
+    // 1. Убираем лишние переносы строк в начале и в конце, сохраняя все пробелы
+    let cleaned = str.replace(/^[\r\n]+/, '').replace(/[\r\n]+$/, '');
+    // 2. Принудительно делаем все переносы CRLF (как в Windows)
+    cleaned = cleaned.replace(/\r\n|\r|\n/g, '\r\n');
+    return cleaned;
   }
 
   // ========== АВТОРИЗАЦИЯ ==========
@@ -806,7 +809,7 @@
       filtered = filtered.filter(item => hasRussian(item.original));
     }
     if (filterNoTranslation.checked) {
-      filtered = filtered.filter(item => item.translation === '');
+      filtered = filtered.filter(item => item.translation.trim() === '');
     }
     if (filterHideEditorSuffix.checked) {
       filtered = filtered.filter(item => {
@@ -816,7 +819,7 @@
     }
     if (filterUnconfirmed.checked) {
       filtered = filtered.filter(item => {
-        const hasTranslation = item.translation !== '';
+        const hasTranslation = item.translation.trim() !== '';
         return hasTranslation && !item.confirmed;
       });
     }
@@ -854,19 +857,20 @@
     if (!item) return;
     const user = getCurrentUserInfo();
 
-    const trimmedTranslation = (newTranslation || '').trim();
+    // Не используем trim(), чтобы сохранить пробелы
+    const rawTranslation = newTranslation || '';
 
     function prepareUpdate(translation, authorUid, authorName) {
-      const trimmed = (translation || '').trim();
       const update = {
-        translation: trimmed,
+        translation: translation, // Сохраняем как есть
         translationAuthor: authorUid,
         translationAuthorName: authorName,
         confirmed: false,
         confirmedBy: '',
         confirmedByName: ''
       };
-      if (trimmed === '') {
+      // Проверка на пустоту только для сброса автора, если перевод удален
+      if (translation.trim() === '') {
         update.translationAuthor = '';
         update.translationAuthorName = '';
       }
@@ -881,20 +885,20 @@
         for (const member of members) {
           let memberTranslation;
           if (member.key === key) {
-            memberTranslation = trimmedTranslation;
+            memberTranslation = rawTranslation;
           } else {
-            memberTranslation = applyTranslationToMember(trimmedTranslation, member.original);
+            memberTranslation = applyTranslationToMember(rawTranslation, member.original);
           }
           const localItem = allData.find(d => d.key === member.key);
           if (localItem) {
             localItem.translation = memberTranslation;
-            localItem.translationAuthor = trimmedTranslation === '' ? '' : user.uid;
-            localItem.translationAuthorName = trimmedTranslation === '' ? '' : user.displayName;
+            localItem.translationAuthor = rawTranslation.trim() === '' ? '' : user.uid;
+            localItem.translationAuthorName = rawTranslation.trim() === '' ? '' : user.displayName;
             localItem.confirmed = false;
             localItem.confirmedBy = '';
             localItem.confirmedByName = '';
           }
-          updates[member.key] = prepareUpdate(memberTranslation, trimmedTranslation === '' ? '' : user.uid, trimmedTranslation === '' ? '' : user.displayName);
+          updates[member.key] = prepareUpdate(memberTranslation, rawTranslation.trim() === '' ? '' : user.uid, rawTranslation.trim() === '' ? '' : user.displayName);
         }
         for (const [k, val] of Object.entries(updates)) {
           stringsRef.child(k).update(val).catch(err => alert('Ошибка сохранения для #' + k + ': ' + err.message));
@@ -904,7 +908,7 @@
       }
     }
 
-    const updateData = prepareUpdate(trimmedTranslation, trimmedTranslation === '' ? '' : user.uid, trimmedTranslation === '' ? '' : user.displayName);
+    const updateData = prepareUpdate(rawTranslation, rawTranslation.trim() === '' ? '' : user.uid, rawTranslation.trim() === '' ? '' : user.displayName);
     stringsRef.child(key).update(updateData).catch(err => alert('Ошибка сохранения: ' + err.message));
   }
 
@@ -930,11 +934,11 @@
     const item = allData.find(d => d.key === key);
     if (!item) return;
 
-    const trimmedNew = (newOriginal || '').trim();
+    const rawNew = newOriginal || '';
+    const trimmedNew = rawNew.trim();
     const oldOriginal = item.original || '';
-    const trimmedOld = oldOriginal.trim();
 
-    if (trimmedNew === trimmedOld) {
+    if (rawNew === oldOriginal) {
       editingOriginalKey = null;
       render();
       return;
@@ -952,19 +956,19 @@
 
     const structIdx = findStructureIndexForKey(key, oldOriginal);
     const updates = {};
-    updates[`strings/${key}/original`] = trimmedNew;
+    updates[`strings/${key}/original`] = rawNew; // Сохраняем с пробелами
     if (structIdx >= 0) {
-      updates[`metadata/lastImportStructure/${structIdx}/content`] = trimmedNew;
+      updates[`metadata/lastImportStructure/${structIdx}/content`] = rawNew;
       updates[`metadata/lastImportStructure/${structIdx}/isEmpty`] = trimmedNew === '';
     }
 
     db.ref().update(updates)
       .then(() => {
-        item.original = trimmedNew;
+        item.original = rawNew;
         if (structIdx >= 0) {
           lastImportStructure[structIdx] = {
             ...lastImportStructure[structIdx],
-            content: trimmedNew,
+            content: rawNew,
             isEmpty: trimmedNew === ''
           };
         }
@@ -1014,7 +1018,7 @@
     for (const entry of allData) {
       if (entry.key === excludeKey) continue;
       if (!entry.confirmed) continue;
-      if (!entry.translation || entry.translation === '') continue;
+      if (!entry.translation || entry.translation.trim() === '') continue;
       if (normalizeOriginalForCompare(entry.original) === currentNormalized) continue;
 
       const entryWords = words(entry.original);
@@ -1129,7 +1133,7 @@
         let confirmedDisplay = '';
         let confirmButton = '';
         if (user.role === 'editor') {
-          const hasTranslation = translation !== '';
+          const hasTranslation = translation.trim() !== '';
           const isConfirmed = confirmed;
           let btnLabel = isConfirmed ? 'Отменить подтверждение' : (hasTranslation ? 'Подтвердить' : 'Нет перевода');
           let btnClass = 'confirm-btn';
@@ -1419,7 +1423,7 @@
     const key = btn.dataset.key;
     const item = allData.find(d => d.key === key);
     if (!item) return;
-    if (item.translation === '') {
+    if (item.translation.trim() === '') {
       alert('Невозможно подтвердить: перевод отсутствует.');
       return;
     }
@@ -1460,14 +1464,18 @@
       const number = match[2];
       const commentInline = match[3];
       const commentPostfix = match[4];
-      const content = match[5];
+      let content = match[5];
+      
+      // Убираем только лишние переносы, пробелы сохраняем
+      content = formatExportText(content);
+      
       const comment = (commentPostfix || commentInline || commentPrefix || '').trim();
-      const trimmedContent = content.trim();
+      const isEmpty = content.trim() === '';
       entries.push({
         number,
         comment,
-        content: trimmedContent,
-        isEmpty: trimmedContent === ''
+        content: content,
+        isEmpty: isEmpty
       });
     }
     return entries;
@@ -1676,8 +1684,8 @@
         const notFound = [];
         for (const item of parsed) {
           const id = String(item.number);
-          const transContent = item.content.trim();
-          if (!transContent) continue;
+          const transContent = item.content;
+          if (transContent.trim() === '') continue;
           let origContent = null;
           const struct = structureById.get(id);
           if (struct) {
@@ -1775,12 +1783,11 @@
     let emptyCount = 0;
 
     for (const s of structure) {
-      const contentStr = ((s.content == null) ? '' : String(s.content)).trim();
-      const isEmpty = s.isEmpty === true || contentStr === '';
+      const contentStr = (s.content == null) ? '' : String(s.content);
+      const isEmpty = s.isEmpty === true || contentStr.trim() === '';
 
       if (isEmpty) {
         const comment = ((s.comment || '') + '').trim();
-        // Используем \r\n для Warcraft 3. Убран лишний пробел после STRING ID
         const commentPart = comment ? `\r\n// ${comment}` : '';
         output += `STRING ${s.id}${commentPart}\r\n{\r\n \r\n}\r\n\r\n`;
         exportedCount++;
@@ -1792,14 +1799,14 @@
       const dbKey = index.get(c);
       if (!dbKey) continue;
       const entry = data[dbKey];
-      const translation = ((entry.translation || '') + '').trim();
+      const translation = (entry.translation == null) ? '' : String(entry.translation);
       
-      // Принудительно заменяем переносы в самом тексте на CRLF
-      const rawText = translation !== '' ? translation : contentStr;
-      const textToWrite = normalizeLineEndings(rawText);
+      // Если перевод не пустой, берем его, иначе оригинал
+      const rawText = translation.trim() !== '' ? translation : contentStr;
+      // Убираем лишние переносы и делаем CRLF
+      const textToWrite = formatExportText(rawText);
       
       const comment = ((s.comment || entry.wtsComment || '') + '').trim();
-      // Убран лишний пробел после STRING ID
       const commentPart = comment ? `\r\n// ${comment}` : '';
 
       output += `STRING ${s.id}${commentPart}\r\n{\r\n${textToWrite}\r\n}\r\n\r\n`;
@@ -1854,19 +1861,17 @@
     let emptyCount = 0;
 
     for (const s of lastImportStructure) {
-      const contentStr = ((s.content == null) ? '' : String(s.content)).trim();
-      const isEmpty = s.isEmpty === true || contentStr === '';
+      const contentStr = (s.content == null) ? '' : String(s.content);
+      const isEmpty = s.isEmpty === true || contentStr.trim() === '';
       const comment = ((s.comment || '') + '').trim();
-      // Используем \r\n для Warcraft 3. Убран лишний пробел после STRING ID
       const commentPart = comment ? `\r\n// ${comment}` : '';
 
       if (isEmpty) {
         output += `STRING ${s.id}${commentPart}\r\n{\r\n \r\n}\r\n\r\n`;
         emptyCount++;
       } else {
-        // Принудительно заменяем переносы в тексте на CRLF
-        const normalizedContent = normalizeLineEndings(contentStr);
-        output += `STRING ${s.id}${commentPart}\r\n{\r\n${normalizedContent}\r\n}\r\n\r\n`;
+        const textToWrite = formatExportText(contentStr);
+        output += `STRING ${s.id}${commentPart}\r\n{\r\n${textToWrite}\r\n}\r\n\r\n`;
       }
       count++;
     }
@@ -2076,8 +2081,8 @@
       let rawComments = entry.userComments || [];
       return {
         key,
-        original: (entry.original || '').trim(),
-        translation: (entry.translation || '').trim(),
+        original: (entry.original == null ? '' : String(entry.original)), // Без trim()
+        translation: (entry.translation == null ? '' : String(entry.translation)), // Без trim()
         translationAuthor: entry.translationAuthor || '',
         translationAuthorName: entry.translationAuthorName || '',
         wtsComment: (rawComment || '').trim(),
