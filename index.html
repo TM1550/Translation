@@ -558,13 +558,22 @@
   let emptyStringIds = [];
   let editingOriginalKey = null;
 
-  // ========== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ CRLF ==========
+  // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
   function normalizeLineEndings(str) {
     if (!str) return '';
     return str.replace(/\r\n|\r|\n/g, '\n').replace(/\n/g, '\r\n');
   }
 
-  // Убирает невидимые символы и хвостовые пробелы — используется перед выводом STRING в WTS
+  // Убирает ТОЛЬКО лишние переносы строк в начале и конце (не трогает пробелы).
+  // Для конца дополнительно убирает отступ (пробелы/табы) перед закрывающей "}".
+  function stripLineBreaks(str) {
+    if (str == null) return '';
+    let s = String(str);
+    s = s.replace(/^[\r\n]+/, '');
+    s = s.replace(/(?:[\r\n]+[ \t]*)+$/, '');
+    return s;
+  }
+
   function cleanId(rawId) {
     return String(rawId == null ? '' : rawId).replace(/[\s\u00A0]+/g, '');
   }
@@ -700,7 +709,7 @@
 
   auth.onAuthStateChanged(user => { updateAuthUI(user); });
 
-  // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+  // ========== ВСПОМОГАТЕЛЬНЫЕ ==========
   function getCurrentUserInfo() {
     if (currentUser) {
       return { uid: currentUser.uid, displayName: currentDisplayName, role: currentUserRole, canManageDb: currentUserCanManageDb };
@@ -722,7 +731,6 @@
     return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
-  // ========== ГРУППИРОВКА ==========
   function makePattern(str) {
     if (!str) return '';
     let cleaned = cleanWtsText(str);
@@ -731,13 +739,11 @@
     return cleaned;
   }
 
-  // ========== ИЗВЛЕЧЕНИЕ ЧИСЕЛ ==========
   function extractNumbers(str) {
     const matches = str.match(/\d+(?:\.\d+)?/g);
     return matches ? matches.map(Number) : [];
   }
 
-  // ========== АВТОПОДСТАНОВКА ==========
   function applyTranslationToMember(templateTranslation, original) {
     const numbers = extractNumbers(original);
     let index = 0;
@@ -790,7 +796,6 @@
     return groups;
   }
 
-  // ========== ФИЛЬТРАЦИЯ ==========
   function getFilteredData() {
     let filtered = allData;
 
@@ -864,19 +869,19 @@
     if (!item) return;
     const user = getCurrentUserInfo();
 
-    const trimmedTranslation = (newTranslation || '').trim();
+    const translationContent = stripLineBreaks(newTranslation || '');
 
     function prepareUpdate(translation, authorUid, authorName) {
-      const trimmed = (translation || '').trim();
+      const content = stripLineBreaks(translation || '');
       const update = {
-        translation: trimmed,
+        translation: content,
         translationAuthor: authorUid,
         translationAuthorName: authorName,
         confirmed: false,
         confirmedBy: '',
         confirmedByName: ''
       };
-      if (trimmed === '') {
+      if (content === '') {
         update.translationAuthor = '';
         update.translationAuthorName = '';
       }
@@ -891,20 +896,20 @@
         for (const member of members) {
           let memberTranslation;
           if (member.key === key) {
-            memberTranslation = trimmedTranslation;
+            memberTranslation = translationContent;
           } else {
-            memberTranslation = applyTranslationToMember(trimmedTranslation, member.original);
+            memberTranslation = applyTranslationToMember(translationContent, member.original);
           }
           const localItem = allData.find(d => d.key === member.key);
           if (localItem) {
             localItem.translation = memberTranslation;
-            localItem.translationAuthor = trimmedTranslation === '' ? '' : user.uid;
-            localItem.translationAuthorName = trimmedTranslation === '' ? '' : user.displayName;
+            localItem.translationAuthor = translationContent === '' ? '' : user.uid;
+            localItem.translationAuthorName = translationContent === '' ? '' : user.displayName;
             localItem.confirmed = false;
             localItem.confirmedBy = '';
             localItem.confirmedByName = '';
           }
-          updates[member.key] = prepareUpdate(memberTranslation, trimmedTranslation === '' ? '' : user.uid, trimmedTranslation === '' ? '' : user.displayName);
+          updates[member.key] = prepareUpdate(memberTranslation, translationContent === '' ? '' : user.uid, translationContent === '' ? '' : user.displayName);
         }
         for (const [k, val] of Object.entries(updates)) {
           stringsRef.child(k).update(val).catch(err => alert('Ошибка сохранения для #' + k + ': ' + err.message));
@@ -914,7 +919,7 @@
       }
     }
 
-    const updateData = prepareUpdate(trimmedTranslation, trimmedTranslation === '' ? '' : user.uid, trimmedTranslation === '' ? '' : user.displayName);
+    const updateData = prepareUpdate(translationContent, translationContent === '' ? '' : user.uid, translationContent === '' ? '' : user.displayName);
     stringsRef.child(key).update(updateData).catch(err => alert('Ошибка сохранения: ' + err.message));
   }
 
@@ -940,20 +945,20 @@
     const item = allData.find(d => d.key === key);
     if (!item) return;
 
-    const trimmedNew = (newOriginal || '').trim();
+    const newContent = stripLineBreaks(newOriginal);
     const oldOriginal = item.original || '';
-    const trimmedOld = oldOriginal.trim();
+    const oldContent = stripLineBreaks(oldOriginal);
 
-    if (trimmedNew === trimmedOld) {
+    if (newContent === oldContent) {
       editingOriginalKey = null;
       render();
       return;
     }
 
-    if (trimmedNew === '') {
+    if (newContent === '') {
       if (!confirm('Оригинал станет пустым. При экспорте будет выведена пустая строка. Продолжить?')) return;
     } else {
-      const newNorm = normalizeOriginalForCompare(trimmedNew);
+      const newNorm = normalizeOriginalForCompare(newContent);
       const duplicate = allData.find(d => d.key !== key && normalizeOriginalForCompare(d.original) === newNorm);
       if (duplicate) {
         if (!confirm(`Внимание: фраза с таким оригиналом уже существует (#${duplicate.key}). Продолжить?`)) return;
@@ -962,20 +967,20 @@
 
     const structIdx = findStructureIndexForKey(key, oldOriginal);
     const updates = {};
-    updates[`strings/${key}/original`] = trimmedNew;
+    updates[`strings/${key}/original`] = newContent;
     if (structIdx >= 0) {
-      updates[`metadata/lastImportStructure/${structIdx}/content`] = trimmedNew;
-      updates[`metadata/lastImportStructure/${structIdx}/isEmpty`] = trimmedNew === '';
+      updates[`metadata/lastImportStructure/${structIdx}/content`] = newContent;
+      updates[`metadata/lastImportStructure/${structIdx}/isEmpty`] = newContent === '';
     }
 
     db.ref().update(updates)
       .then(() => {
-        item.original = trimmedNew;
+        item.original = newContent;
         if (structIdx >= 0) {
           lastImportStructure[structIdx] = {
             ...lastImportStructure[structIdx],
-            content: trimmedNew,
-            isEmpty: trimmedNew === ''
+            content: newContent,
+            isEmpty: newContent === ''
           };
         }
         editingOriginalKey = null;
@@ -1013,7 +1018,7 @@
       .catch(err => alert('Ошибка обновления статуса: ' + err.message));
   }
 
-  // ========== ПОХОЖИЕ ПОДТВЕРЖДЁННЫЕ ==========
+  // ========== ПОХОЖИЕ ==========
   function findSimilarConfirmedTranslations(original, excludeKey, maxResults = 5) {
     const words = text => text.toLowerCase().replace(/[^a-zа-яё\s]/g, '').split(/\s+/).filter(w => w.length > 2);
     const currentWords = words(original);
@@ -1472,12 +1477,12 @@
       const commentPostfix = match[4];
       const content = match[5];
       const comment = (commentPostfix || commentInline || commentPrefix || '').trim();
-      const trimmedContent = content.trim();
+      const contentStripped = stripLineBreaks(content);
       entries.push({
         number,
         comment,
-        content: trimmedContent,
-        isEmpty: trimmedContent === ''
+        content: contentStripped,
+        isEmpty: contentStripped === ''
       });
     }
     return entries;
@@ -1686,12 +1691,12 @@
         const notFound = [];
         for (const item of parsed) {
           const id = String(item.number);
-          const transContent = item.content.trim();
-          if (!transContent) continue;
+          const transContent = stripLineBreaks(item.content);
+          if (transContent === '') continue;
           let origContent = null;
           const struct = structureById.get(id);
           if (struct) {
-            if (struct.isEmpty || !struct.content || String(struct.content).trim() === '') {
+            if (struct.isEmpty || stripLineBreaks(struct.content == null ? '' : String(struct.content)) === '') {
               skippedEmptyOriginals++;
               continue;
             }
@@ -1778,11 +1783,6 @@
   });
 
   // ========== ЭКСПОРТ ПЕРЕВОДОВ ==========
-  //
-  // ВАЖНО: формат вывода для каждой строки:
-  //   STRING <id>[ \r\n// <comment>]\r\n{\r\n<content>\r\n}\r\n\r\n
-  //   — после <id> НЕТ пробела. Пробел только между "STRING" и <id>.
-  //
   function generateWTSFromStructure(data, structure) {
     const index = buildContentIndex(data);
     let output = '';
@@ -1790,18 +1790,20 @@
     let emptyCount = 0;
 
     for (const s of structure) {
-      const idClean = cleanId(s.id);                       // ID без пробелов
-      const contentStr = ((s.content == null) ? '' : String(s.content)).trim();
+      const idClean = cleanId(s.id);
+      const contentStr = stripLineBreaks(s.content == null ? '' : String(s.content));
       const isEmpty = s.isEmpty === true || contentStr === '';
 
-      // Хвостовик: 'STRING 2230' (без завершающего пробела) + при необходимости комментарий
       const comment = cleanComment(s.comment || '');
       const commentPart = comment ? `\r\n// ${comment}` : '';
       const header = `STRING ${idClean}${commentPart}`;
 
       if (isEmpty) {
-        // Пустая строка: { \r\n } внутри — без лишних пробелов перед CRLF
-        output += `${header}\r\n{\r\n}\r\n\r\n`;
+        // Пустая строка: добавляем дополнительный перенос, чтобы получить
+        //   {
+        //
+        //   }
+        output += `${header}\r\n{\r\n\r\n}\r\n\r\n`;
         exportedCount++;
         emptyCount++;
         continue;
@@ -1811,7 +1813,7 @@
       const dbKey = index.get(c);
       if (!dbKey) continue;
       const entry = data[dbKey];
-      const translation = ((entry.translation || '') + '').trim();
+      const translation = stripLineBreaks((entry.translation || '') + '');
 
       const rawText = translation !== '' ? translation : contentStr;
       const textToWrite = normalizeLineEndings(rawText);
@@ -1857,9 +1859,6 @@
   exportBtn.addEventListener('click', exportWTS);
 
   // ========== ЭКСПОРТ ОРИГИНАЛОВ ==========
-  //
-  // Тот же принцип — никаких пробелов после STRING <id>.
-  //
   function exportOriginalsWTS() {
     if (!lastImportStructure || lastImportStructure.length === 0) {
       alert('Нет данных о последнем загруженном файле.\nСначала загрузите .wts с оригинальными фразами.');
@@ -1872,14 +1871,14 @@
 
     for (const s of lastImportStructure) {
       const idClean = cleanId(s.id);
-      const contentStr = ((s.content == null) ? '' : String(s.content)).trim();
+      const contentStr = stripLineBreaks(s.content == null ? '' : String(s.content));
       const isEmpty = s.isEmpty === true || contentStr === '';
       const comment = cleanComment(s.comment || '');
       const commentPart = comment ? `\r\n// ${comment}` : '';
       const header = `STRING ${idClean}${commentPart}`;
 
       if (isEmpty) {
-        output += `${header}\r\n{\r\n}\r\n\r\n`;
+        output += `${header}\r\n{\r\n\r\n}\r\n\r\n`;
         emptyCount++;
       } else {
         const normalizedContent = normalizeLineEndings(contentStr);
@@ -2093,8 +2092,8 @@
       let rawComments = entry.userComments || [];
       return {
         key,
-        original: (entry.original || '').trim(),
-        translation: (entry.translation || '').trim(),
+        original: stripLineBreaks(entry.original || ''),
+        translation: stripLineBreaks(entry.translation || ''),
         translationAuthor: entry.translationAuthor || '',
         translationAuthorName: entry.translationAuthorName || '',
         wtsComment: (rawComment || '').trim(),
