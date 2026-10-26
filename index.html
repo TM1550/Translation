@@ -733,7 +733,7 @@
 
   function makePattern(str) {
     if (!str) return '';
-    let cleaned = cleanWtsText(str);
+    let cleaned = cleanWtsText(str, true);
     cleaned = cleaned.replace(/\d+(?:\.\d+)?/g, '#');
     cleaned = cleaned.replace(/<[^>]+>/g, '<TAG>');
     return cleaned;
@@ -755,26 +755,21 @@
     });
   }
 
-  function cleanWtsText(text) {
-    if (!text) return '';
-    let cleaned = text.replace(/\|c[0-9a-fA-F]{6,8}/g, '');
-    cleaned = cleaned.replace(/\|r/g, '');
-    cleaned = cleaned.replace(/\s+/g, ' ').trim();
-    return cleaned;
+  // Нормализация применяется только к ключам сравнения, не к тексту в БД.
+  function cleanWtsText(text, preserveLeading = false) {
+    const plain = String(text ?? '').replace(/\|c[0-9a-fA-F]{6,8}|\|r/g, '');
+    const leading = preserveLeading ? (plain.match(/^[ \t]+/) || [''])[0] : '';
+    return leading + plain.replace(/\s+/g, ' ').trim();
   }
 
   function normalizeOriginalForCompare(text) {
-    return cleanWtsText(text).toLowerCase();
-  }
-
-  function normalizeForMatch(text) {
-    return cleanWtsText(text || '').toLowerCase();
+    return cleanWtsText(text, true).toLowerCase();
   }
 
   function buildContentIndex(data) {
     const index = new Map();
     for (const [key, entry] of Object.entries(data)) {
-      const c = normalizeForMatch(entry.original);
+      const c = normalizeOriginalForCompare(entry.original);
       if (!index.has(c)) index.set(c, key);
     }
     return index;
@@ -800,7 +795,8 @@
     let filtered = allData;
 
     if (filterByImported.checked && importedNumbers.length > 0) {
-      filtered = filtered.filter(item => importedNumbers.includes(item.key));
+      const imported = new Set(importedNumbers);
+      filtered = filtered.filter(item => imported.has(item.key));
     }
 
     if (filterInactive.checked) {
@@ -868,59 +864,27 @@
     const item = allData.find(d => d.key === key);
     if (!item) return;
     const user = getCurrentUserInfo();
-
-    const translationContent = stripLineBreaks(newTranslation || '');
-
-    function prepareUpdate(translation, authorUid, authorName) {
-      const content = stripLineBreaks(translation || '');
+    const content = stripLineBreaks(newTranslation);
+    const pattern = makePattern(item.original);
+    const members = groupMode.checked
+      ? allData.filter(m => makePattern(m.original) === pattern) : [item];
+    const updates = {};
+    for (const member of members) {
+      const translation = stripLineBreaks(member.key === key
+        ? content : applyTranslationToMember(content, member.original));
       const update = {
-        translation: content,
-        translationAuthor: authorUid,
-        translationAuthorName: authorName,
+        translation,
+        translationAuthor: translation === '' ? '' : user.uid,
+        translationAuthorName: translation === '' ? '' : user.displayName,
         confirmed: false,
         confirmedBy: '',
         confirmedByName: ''
       };
-      if (content === '') {
-        update.translationAuthor = '';
-        update.translationAuthorName = '';
-      }
-      return update;
-    }
-
-    if (groupMode.checked) {
-      const pattern = makePattern(item.original);
-      const members = allData.filter(m => makePattern(m.original) === pattern);
-      if (members.length > 1) {
-        const updates = {};
-        for (const member of members) {
-          let memberTranslation;
-          if (member.key === key) {
-            memberTranslation = translationContent;
-          } else {
-            memberTranslation = applyTranslationToMember(translationContent, member.original);
-          }
-          const localItem = allData.find(d => d.key === member.key);
-          if (localItem) {
-            localItem.translation = memberTranslation;
-            localItem.translationAuthor = translationContent === '' ? '' : user.uid;
-            localItem.translationAuthorName = translationContent === '' ? '' : user.displayName;
-            localItem.confirmed = false;
-            localItem.confirmedBy = '';
-            localItem.confirmedByName = '';
-          }
-          updates[member.key] = prepareUpdate(memberTranslation, translationContent === '' ? '' : user.uid, translationContent === '' ? '' : user.displayName);
-        }
-        for (const [k, val] of Object.entries(updates)) {
-          stringsRef.child(k).update(val).catch(err => alert('Ошибка сохранения для #' + k + ': ' + err.message));
-        }
-        render();
-        return;
+      for (const [field, value] of Object.entries(update)) {
+        updates[`${member.key}/${field}`] = value;
       }
     }
-
-    const updateData = prepareUpdate(translationContent, translationContent === '' ? '' : user.uid, translationContent === '' ? '' : user.displayName);
-    stringsRef.child(key).update(updateData).catch(err => alert('Ошибка сохранения: ' + err.message));
+    stringsRef.update(updates).catch(err => alert('Ошибка сохранения: ' + err.message));
   }
 
   // ========== РЕДАКТИРОВАНИЕ ОРИГИНАЛА ==========
@@ -1260,45 +1224,23 @@
       container.innerHTML = html;
       countStatus.textContent = totalDisplay;
 
-      container.querySelectorAll('.translation-input').forEach(textarea => {
-        autoResize(textarea);
-        textarea.removeEventListener('input', handleTextareaInput);
-        textarea.addEventListener('input', handleTextareaInput);
-        textarea.removeEventListener('keydown', handleTextareaKeydown);
-        textarea.addEventListener('keydown', handleTextareaKeydown);
-      });
-      container.querySelectorAll('.save-translation-btn').forEach(btn => {
-        btn.removeEventListener('click', handleSaveTranslation);
-        btn.addEventListener('click', handleSaveTranslation);
-      });
-      container.querySelectorAll('.comment-save-btn').forEach(btn => {
-        btn.removeEventListener('click', handleCommentSave);
-        btn.addEventListener('click', handleCommentSave);
-      });
-      container.querySelectorAll('.confirm-btn').forEach(btn => {
-        btn.removeEventListener('click', handleConfirmToggle);
-        btn.addEventListener('click', handleConfirmToggle);
-      });
-      container.querySelectorAll('.inactive-btn').forEach(btn => {
-        btn.removeEventListener('click', handleInactiveToggle);
-        btn.addEventListener('click', handleInactiveToggle);
-      });
-      container.querySelectorAll('.similar-btn').forEach(btn => {
-        btn.removeEventListener('click', handleSimilar);
-        btn.addEventListener('click', handleSimilar);
-      });
-      container.querySelectorAll('.original-edit-btn').forEach(btn => {
-        btn.removeEventListener('click', handleOriginalEditClick);
-        btn.addEventListener('click', handleOriginalEditClick);
-      });
-      container.querySelectorAll('.original-save-btn').forEach(btn => {
-        btn.removeEventListener('click', handleOriginalSaveClick);
-        btn.addEventListener('click', handleOriginalSaveClick);
-      });
-      container.querySelectorAll('.original-cancel-btn').forEach(btn => {
-        btn.removeEventListener('click', handleOriginalCancelClick);
-        btn.addEventListener('click', handleOriginalCancelClick);
-      });
+      const bindings = {
+        '.translation-input': { input: handleTextareaInput, keydown: handleTextareaKeydown },
+        '.save-translation-btn': { click: handleSaveTranslation },
+        '.comment-save-btn': { click: handleCommentSave },
+        '.confirm-btn': { click: handleConfirmToggle },
+        '.inactive-btn': { click: handleInactiveToggle },
+        '.similar-btn': { click: handleSimilar },
+        '.original-edit-btn': { click: handleOriginalEditClick },
+        '.original-save-btn': { click: handleOriginalSaveClick },
+        '.original-cancel-btn': { click: handleOriginalCancelClick }
+      };
+      for (const [selector, events] of Object.entries(bindings)) {
+        for (const element of container.querySelectorAll(selector)) {
+          if (selector === '.translation-input') autoResize(element);
+          for (const [event, handler] of Object.entries(events)) element.addEventListener(event, handler);
+        }
+      }
       container.querySelectorAll('.original-edit-input').forEach(textarea => {
         textarea.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -1508,7 +1450,7 @@
           : `Найдено ${parsed.length} непустых строк. Импортировать?`;
         if (!window.confirm(confirmMsg)) return;
 
-        const norm = (t) => normalizeOriginalForCompare(t);
+        const norm = normalizeOriginalForCompare;
         const inactiveByContent = new Map();
         for (const item of allData) {
           if (item.inactive) inactiveByContent.set(norm(item.original), true);
@@ -1560,18 +1502,7 @@
           const existing = existingByContent.get(c);
           const targetKey = String(p.number);
 
-          if (finalMap.has(targetKey)) {
-            let nid = nextId;
-            while (reservedIds.has(String(nid)) || finalMap.has(String(nid))) nid++;
-            const displaced = finalMap.get(targetKey);
-            finalMap.delete(targetKey);
-            finalMap.set(String(nid), { ...displaced, key: String(nid) });
-            maxId = Math.max(maxId, nid);
-            nextId = nid + 1;
-          }
-
-          const existingInactive = existing ? (existing.inactive || false) : (inactiveByContent.get(c) || false);
-          const inactiveFinal = inactiveByContent.get(c) || existingInactive;
+          const inactiveFinal = inactiveByContent.has(c);
 
           finalMap.set(targetKey, {
             key: targetKey,
@@ -1609,39 +1540,34 @@
 
         const relocatedCount = itemsToRelocate.length;
 
-        stringsRef.update(updates)
+        const numbers = parsed.map(item => item.number);
+        const structure = allParsed.map(item => ({
+          id: String(item.number),
+          content: item.content,
+          comment: item.comment || '',
+          isEmpty: item.isEmpty === true
+        }));
+        const emptyIds = emptyParsed.map(item => String(item.number));
+        const rootUpdates = { metadata: {
+          importedNumbers: numbers,
+          lastImportStructure: structure,
+          emptyStringIds: emptyIds
+        } };
+        for (const [key, value] of Object.entries(updates)) rootUpdates[`strings/${key}`] = value;
+        db.ref().update(rootUpdates)
           .then(() => {
-            const numbers = parsed.map(item => item.number);
+            importedNumbers = numbers;
+            lastImportStructure = structure;
+            emptyStringIds = emptyIds;
+            filterByImported.checked = true;
+            currentPage = 0;
 
-            const structure = allParsed.map(item => ({
-              id: String(item.number),
-              content: item.content,
-              comment: item.comment || '',
-              isEmpty: item.isEmpty === true
-            }));
-
-            const emptyIds = emptyParsed.map(item => String(item.number));
-
-            metadataRef.set({
-              importedNumbers: numbers,
-              lastImportStructure: structure,
-              emptyStringIds: emptyIds
-            })
-              .then(() => {
-                importedNumbers = numbers;
-                lastImportStructure = structure;
-                emptyStringIds = emptyIds;
-                filterByImported.checked = true;
-                currentPage = 0;
-
-                let msg = `Импортировано ${parsed.length} непустых строк`;
-                if (emptyParsed.length > 0) msg += ` и ${emptyParsed.length} пустых (будут выведены при экспорте)`;
-                msg += `. Включён фильтр "Только загруженные".`;
-                if (relocatedCount > 0) msg += `\nПеренесено старых фраз (конфликт по ID): ${relocatedCount}.`;
-                alert(msg);
-                render();
-              })
-              .catch(err => console.warn('Не удалось сохранить метаданные:', err));
+            let msg = `Импортировано ${parsed.length} непустых строк`;
+            if (emptyParsed.length > 0) msg += ` и ${emptyParsed.length} пустых (будут выведены при экспорте)`;
+            msg += `. Включён фильтр "Только загруженные".`;
+            if (relocatedCount > 0) msg += `\nПеренесено старых фраз (конфликт по ID): ${relocatedCount}.`;
+            alert(msg);
+            render();
           })
           .catch(err => {
             console.error('Ошибка импорта:', err);
@@ -1718,11 +1644,9 @@
             translationAuthor: user.uid,
             translationAuthorName: user.displayName
           };
-          if (shouldConfirm) {
-            updateData.confirmed = true;
-            updateData.confirmedBy = user.uid;
-            updateData.confirmedByName = user.displayName;
-          }
+          updateData.confirmed = shouldConfirm;
+          updateData.confirmedBy = shouldConfirm ? user.uid : '';
+          updateData.confirmedByName = shouldConfirm ? user.displayName : '';
           updates[dbKey] = updateData;
           added++;
         }
@@ -1740,24 +1664,14 @@
           (skippedEmptyOriginals > 0 ? `Пропущено (пустые оригиналы): ${skippedEmptyOriginals}.\n` : '') +
           `Не найдено в базе: ${notFound.length}.${confirmMsg}\n\nПродолжить?`
         )) return;
-        const promiseArray = [];
+        const fieldUpdates = {};
         for (const [key, data] of Object.entries(updates)) {
-          promiseArray.push(stringsRef.child(key).update(data));
+          for (const [field, value] of Object.entries(data)) fieldUpdates[`${key}/${field}`] = value;
         }
-        Promise.all(promiseArray)
+        stringsRef.update(fieldUpdates)
           .then(() => {
-            for (const [key, data] of Object.entries(updates)) {
-              const localItem = allData.find(d => d.key === key);
-              if (localItem) {
-                localItem.translation = data.translation;
-                localItem.translationAuthor = data.translationAuthor;
-                localItem.translationAuthorName = data.translationAuthorName;
-                if (shouldConfirm) {
-                  localItem.confirmed = data.confirmed;
-                  localItem.confirmedBy = data.confirmedBy;
-                  localItem.confirmedByName = data.confirmedByName;
-                }
-              }
+            for (const item of allData) {
+              if (updates[item.key]) Object.assign(item, updates[item.key]);
             }
             render();
             alert(
@@ -1782,130 +1696,69 @@
     this.value = '';
   });
 
-  // ========== ЭКСПОРТ ПЕРЕВОДОВ ==========
-  function generateWTSFromStructure(data, structure) {
-    const index = buildContentIndex(data);
-    let output = '';
-    let exportedCount = 0;
-    let emptyCount = 0;
-
-    for (const s of structure) {
-      const idClean = cleanId(s.id);
-      const contentStr = stripLineBreaks(s.content == null ? '' : String(s.content));
-      const isEmpty = s.isEmpty === true || contentStr === '';
-
-      const comment = cleanComment(s.comment || '');
-      const commentPart = comment ? `\r\n// ${comment}` : '';
-      const header = `STRING ${idClean}${commentPart}`;
-
-      if (isEmpty) {
-        // Пустая строка: добавляем дополнительный перенос, чтобы получить
-        //   {
-        //
-        //   }
-        output += `${header}\r\n{\r\n\r\n}\r\n\r\n`;
-        exportedCount++;
-        emptyCount++;
-        continue;
-      }
-
-      const c = normalizeForMatch(contentStr);
-      const dbKey = index.get(c);
-      if (!dbKey) continue;
-      const entry = data[dbKey];
-      const translation = stripLineBreaks((entry.translation || '') + '');
-
-      const rawText = translation !== '' ? translation : contentStr;
-      const textToWrite = normalizeLineEndings(rawText);
-
-      output += `${header}\r\n{\r\n${textToWrite}\r\n}\r\n\r\n`;
-      exportedCount++;
-    }
-
-    return { text: output, count: exportedCount, emptyCount };
-  }
-
-  function exportWTS() {
-    stringsRef.once('value', (snapshot) => {
-      const data = snapshot.val();
-      if (!data || Object.keys(data).length === 0) {
-        alert('Нет данных для экспорта.');
-        return;
-      }
-      if (!lastImportStructure || lastImportStructure.length === 0) {
-        alert('Нет данных о последнем загруженном файле.\nСначала загрузите .wts с оригинальными фразами.');
-        return;
-      }
-      const result = generateWTSFromStructure(data, lastImportStructure);
-      if (result.count === 0) {
-        alert('Ни одна фраза из последнего загруженного файла не найдена в базе. Экспорт отменён.');
-        return;
-      }
-
-      const textWithBom = '\uFEFF' + result.text;
-      const blob = new Blob([textWithBom], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'translated_strings.wts';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      alert(`Экспортировано ${result.count} фраз (из них пустых: ${result.emptyCount}) по структуре последнего загруженного файла.\nКодировка: UTF-8 с BOM. Переносы строк: CRLF.`);
-    });
-  }
-
-  exportBtn.addEventListener('click', exportWTS);
-
-  // ========== ЭКСПОРТ ОРИГИНАЛОВ ==========
-  function exportOriginalsWTS() {
-    if (!lastImportStructure || lastImportStructure.length === 0) {
-      alert('Нет данных о последнем загруженном файле.\nСначала загрузите .wts с оригинальными фразами.');
-      return;
-    }
-
+  // ========== ЭКСПОРТ WTS ==========
+  function generateWTSFromStructure(data, structure, originalsOnly = false) {
+    const index = originalsOnly ? null : buildContentIndex(data);
     let output = '';
     let count = 0;
     let emptyCount = 0;
-
-    for (const s of lastImportStructure) {
-      const idClean = cleanId(s.id);
-      const contentStr = stripLineBreaks(s.content == null ? '' : String(s.content));
-      const isEmpty = s.isEmpty === true || contentStr === '';
-      const comment = cleanComment(s.comment || '');
-      const commentPart = comment ? `\r\n// ${comment}` : '';
-      const header = `STRING ${idClean}${commentPart}`;
-
+    for (const s of structure) {
+      const content = stripLineBreaks(s.content);
+      const isEmpty = s.isEmpty === true || content === '';
+      let text = content;
       if (isEmpty) {
-        output += `${header}\r\n{\r\n\r\n}\r\n\r\n`;
+        text = '';
         emptyCount++;
-      } else {
-        const normalizedContent = normalizeLineEndings(contentStr);
-        output += `${header}\r\n{\r\n${normalizedContent}\r\n}\r\n\r\n`;
+      } else if (!originalsOnly) {
+        const key = index.get(normalizeOriginalForCompare(content));
+        if (key === undefined) continue;
+        const translation = stripLineBreaks(data[key].translation);
+        if (translation !== '') text = translation;
       }
+      const comment = cleanComment(s.comment);
+      const header = `STRING ${cleanId(s.id)}${comment ? `\r\n// ${comment}` : ''}`;
+      output += `${header}\r\n{\r\n${normalizeLineEndings(text)}\r\n}\r\n\r\n`;
       count++;
     }
-
-    if (count === 0) {
-      alert('Нет данных для экспорта.');
-      return;
-    }
-
-    const textWithBom = '\uFEFF' + output;
-    const blob = new Blob([textWithBom], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'original_strings.wts';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    alert(`Экспортировано ${count} строк оригиналов (из них пустых: ${emptyCount}).\nКодировка: UTF-8 с BOM. Переносы строк: CRLF.`);
+    return { text: output, count, emptyCount };
   }
 
-  exportOriginalsBtn.addEventListener('click', exportOriginalsWTS);
+  function downloadFile(text, filename, type = 'text/plain;charset=utf-8') {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  async function exportWTS(originalsOnly = false) {
+    if (lastImportStructure.length === 0) {
+      alert('Нет данных о последнем загруженном файле.\nСначала загрузите .wts с оригинальными фразами.');
+      return;
+    }
+    try {
+      const data = originalsOnly ? {} : (await stringsRef.once('value')).val();
+      if (!originalsOnly && (!data || Object.keys(data).length === 0)) {
+        alert('Нет данных для экспорта.');
+        return;
+      }
+      const result = generateWTSFromStructure(data, lastImportStructure, originalsOnly);
+      if (result.count === 0) {
+        alert('Ни одна фраза из последнего загруженного файла не найдена в базе.');
+        return;
+      }
+      downloadFile('\uFEFF' + result.text, originalsOnly ? 'original_strings.wts' : 'translated_strings.wts');
+      alert(`Экспортировано ${result.count} фраз (из них пустых: ${result.emptyCount}).\nКодировка: UTF-8 с BOM. Переносы строк: CRLF.`);
+    } catch (err) {
+      alert('Ошибка экспорта: ' + err.message);
+    }
+  }
+
+  exportBtn.addEventListener('click', () => exportWTS());
+  exportOriginalsBtn.addEventListener('click', () => exportWTS(true));
 
   // ========== РЕЖИМ РЕДАКТИРОВАНИЯ ОРИГИНАЛА ==========
   editOriginalModeCheckbox.addEventListener('change', () => {
@@ -1934,18 +1787,10 @@
           metadata: metadataData
         };
         const json = JSON.stringify(backup, null, 2);
-        const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
         const now = new Date();
         const ts = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}`;
         const filename = `kotmysh_db_backup_${ts}.json`;
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        downloadFile(json, filename, 'application/json;charset=utf-8');
         alert(`База данных выгружена.\nФраз: ${Object.keys(stringsData).length}\nФайл: ${filename}`);
       })
       .catch(err => {
@@ -1985,8 +1830,7 @@
         const code = prompt('Для подтверждения введите слово "ВОССТАНОВИТЬ" (без кавычек):');
         if (code !== 'ВОССТАНОВИТЬ') { alert('Операция отменена. Код не совпадает.'); return; }
         if (!confirm('Последний шанс! Заменить всю базу данных содержимым файла?')) return;
-        stringsRef.set(stringsData)
-          .then(() => metadataRef.set(metadataData))
+        db.ref().update({ strings: stringsData, metadata: metadataData })
           .then(() => {
             importedNumbers = Array.isArray(metadataData.importedNumbers) ? metadataData.importedNumbers : [];
             lastImportStructure = Array.isArray(metadataData.lastImportStructure) ? metadataData.lastImportStructure : [];
@@ -2050,13 +1894,10 @@
 
   searchInput.addEventListener('input', () => { currentPage = 0; render(); });
 
-  filterOnlyRussian.addEventListener('change', () => { currentPage = 0; render(); });
-  filterNoTranslation.addEventListener('change', () => { currentPage = 0; render(); });
-  filterHideEditorSuffix.addEventListener('change', () => { currentPage = 0; render(); });
-  filterUnconfirmed.addEventListener('change', () => { currentPage = 0; render(); });
-  filterByImported.addEventListener('change', () => { currentPage = 0; render(); });
-  filterInactive.addEventListener('change', () => { currentPage = 0; render(); });
-  groupMode.addEventListener('change', () => { currentPage = 0; render(); });
+  for (const filter of [filterOnlyRussian, filterNoTranslation, filterHideEditorSuffix,
+    filterUnconfirmed, filterByImported, filterInactive, groupMode]) {
+    filter.addEventListener('change', () => { currentPage = 0; render(); });
+  }
 
   refreshBtn.addEventListener('click', () => { stringsRef.once('value', () => render()); });
 
