@@ -279,6 +279,8 @@
     .entry .inactive-btn.active:hover { background: #388e3c; }
     .entry .similar-btn { background: #6a1b9a; color: white; border: none; border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 13px; }
     .entry .similar-btn:hover { background: #4a148c; }
+    .entry .last-confirmed-btn { background: #607d8b; color: white; border: none; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 13px; }
+    .entry .last-confirmed-btn:hover { background: #455a64; }
     .entry .original-edit-btn {
       background: #455a64; color: white; border: none; border-radius: 6px;
       padding: 4px 10px; cursor: pointer; font-size: 12px; margin-top: 4px; align-self: flex-start;
@@ -301,6 +303,16 @@
       padding: 4px 12px; cursor: pointer; font-size: 13px;
     }
     .entry .original-cancel-btn:hover { background: #757575; }
+    .entry .duplicate-info {
+      font-size: 12px; color: #00695c; background: #e0f2f1;
+      padding: 2px 8px; border-radius: 10px; display: inline-block;
+      margin-top: 4px; cursor: help;
+    }
+    .entry .duplicate-info:hover { background: #b2dfdb; }
+    .entry .original-author-info {
+      font-size: 12px; color: #666; margin-top: 2px;
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    }
     .entry .comment-section {
       grid-column: 1 / -1;
       margin-top: 6px;
@@ -373,12 +385,29 @@
     .modal-box .close-btn:hover { color: #333; }
     .modal-box h3 { margin-bottom: 12px; }
     .modal-box .modal-item { margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #eee; }
-    .modal-box .modal-item .modal-original { font-weight: 500; white-space: pre-wrap; }
-    .modal-box .modal-item .modal-translation { color: #555; font-size: 0.95em; margin-top: 4px; white-space: pre-wrap; }
+    .modal-box .modal-item .modal-original { font-weight: 500; white-space: pre-wrap; word-break: break-word; }
+    .modal-box .modal-item .modal-translation { color: #555; font-size: 0.95em; margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
     .modal-box .modal-item .modal-score { font-size: 0.8em; color: #888; margin-top: 2px; }
     .modal-box .modal-item strong { background: #ffeb3b; padding: 0 2px; border-radius: 2px; }
     .modal-box .modal-item .modal-header { display: flex; justify-content: space-between; }
     .modal-box .modal-item .modal-header .modal-key { color: #888; font-size: 0.9em; }
+    .modal-box .modal-comment { margin-bottom: 8px; padding: 6px 10px; background: #f5f5f5; border-radius: 6px; }
+    .modal-box .modal-comment .modal-text { display: block; white-space: pre-wrap; word-break: break-word; }
+    .modal-box .modal-comment .modal-author { display: block; font-size: 12px; color: #888; margin-top: 2px; }
+    .restore-last-confirmed-btn {
+      background: #2e7d32;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 20px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .restore-last-confirmed-btn:hover { background: #1b5e20; }
+    .last-confirmed-block { background: #f5f5f5; padding: 8px 12px; border-radius: 6px; white-space: pre-wrap; word-break: break-word; }
+    .last-confirmed-block.confirmed-now { background: #e8f5e9; border-left: 3px solid #2e7d32; }
+    .last-confirmed-meta { font-size: 12px; color: #666; margin-top: 4px; }
     @media (max-width: 768px) {
       .entry { grid-template-columns: 1fr; }
       .entry .right-col { border-left: none; padding-left: 0; border-top: 1px solid #ddd; padding-top: 8px; }
@@ -402,7 +431,6 @@
   </div>
 
   <div class="toolbar">
-    <button id="refreshBtn">🔄 Обновить</button>
     <button class="import-btn" id="importBtn" style="display:none;">📂 Загрузить .wts</button>
     <input type="file" id="fileInput" accept=".wts">
     <button class="import-translations-wts-btn" id="importTranslationsWtsBtn" style="display:none;">📥 Загрузить переводы .wts</button>
@@ -422,11 +450,9 @@
     <input type="file" id="dbRestoreInput" accept=".json" style="display:none;">
 
     <div class="filter-group">
-      <label><input type="checkbox" id="filterOnlyRussian"> Только с русскими буквами</label>
+      <label title="Скрыть фразы без русских букв, с EditorSuffix и не из последнего импорта"><input type="checkbox" id="filterHideUnnecessary"> Скрыть ненужные фразы</label>
       <label><input type="checkbox" id="filterNoTranslation"> Без перевода</label>
-      <label><input type="checkbox" id="filterHideEditorSuffix"> Скрыть с EditorSuffix</label>
       <label><input type="checkbox" id="filterUnconfirmed"> Неподтверждённые переводы</label>
-      <label><input type="checkbox" id="filterByImported"> Только загруженные</label>
       <label><input type="checkbox" id="filterInactive"> Скрыть неактивные</label>
       <label><input type="checkbox" id="groupMode"> Группировать по шаблону</label>
     </div>
@@ -472,6 +498,14 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="lastConfirmedModal">
+    <div class="modal-box">
+      <span class="close-btn" id="lastConfirmedClose">&times;</span>
+      <h3 id="lastConfirmedTitle">Последний подтверждённый перевод</h3>
+      <div id="lastConfirmedContent"></div>
+    </div>
+  </div>
+
   <div class="status">
     <span id="connectionStatus">⏳ Подключение...</span>
     <span id="countStatus">0</span>
@@ -509,12 +543,9 @@
   const exportOriginalsBtn = document.getElementById('exportOriginalsBtn');
   const editOriginalModeCheckbox = document.getElementById('editOriginalMode');
   const editOriginalModeLabel = document.getElementById('editOriginalModeLabel');
-  const refreshBtn = document.getElementById('refreshBtn');
-  const filterOnlyRussian = document.getElementById('filterOnlyRussian');
+  const filterHideUnnecessary = document.getElementById('filterHideUnnecessary');
   const filterNoTranslation = document.getElementById('filterNoTranslation');
-  const filterHideEditorSuffix = document.getElementById('filterHideEditorSuffix');
   const filterUnconfirmed = document.getElementById('filterUnconfirmed');
-  const filterByImported = document.getElementById('filterByImported');
   const filterInactive = document.getElementById('filterInactive');
   const groupMode = document.getElementById('groupMode');
   const perPageSelect = document.getElementById('perPage');
@@ -546,6 +577,11 @@
   const similarModalTitle = document.getElementById('similarModalTitle');
   const similarModalList = document.getElementById('similarModalList');
 
+  const lastConfirmedModal = document.getElementById('lastConfirmedModal');
+  const lastConfirmedClose = document.getElementById('lastConfirmedClose');
+  const lastConfirmedTitle = document.getElementById('lastConfirmedTitle');
+  const lastConfirmedContent = document.getElementById('lastConfirmedContent');
+
   let allData = [];
   let currentPage = 0;
   let itemsPerPage = 25;
@@ -556,6 +592,7 @@
   let importedNumbers = [];
   let lastImportStructure = [];
   let emptyStringIds = [];
+  let duplicateGroups = new Map();
   let editingOriginalKey = null;
 
   // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
@@ -564,8 +601,6 @@
     return str.replace(/\r\n|\r|\n/g, '\n').replace(/\n/g, '\r\n');
   }
 
-  // Убирает ТОЛЬКО лишние переносы строк в начале и конце (не трогает пробелы).
-  // Для конца дополнительно убирает отступ (пробелы/табы) перед закрывающей "}".
   function stripLineBreaks(str) {
     if (str == null) return '';
     let s = String(str);
@@ -582,6 +617,126 @@
       .replace(/[\u00A0]/g, ' ')
       .replace(/[\r\n]+/g, ' ')
       .trim();
+  }
+
+  function hasRussian(text) { return /[а-яё]/i.test(text); }
+
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  function formatTimestamp(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function makePattern(str) {
+    if (!str) return '';
+    let cleaned = cleanWtsText(str, true);
+    cleaned = cleaned.replace(/\d+(?:\.\d+)?/g, '#');
+    cleaned = cleaned.replace(/<[^>]+>/g, '<TAG>');
+    return cleaned;
+  }
+
+  function extractNumbers(str) {
+    const matches = str.match(/\d+(?:\.\d+)?/g);
+    return matches ? matches.map(Number) : [];
+  }
+
+  function applyTranslationToMember(templateTranslation, original) {
+    const numbers = extractNumbers(original);
+    let index = 0;
+    return templateTranslation.replace(/\d+(?:\.\d+)?/g, function(match) {
+      if (index < numbers.length) return numbers[index++];
+      return match;
+    });
+  }
+
+  function cleanWtsText(text, preserveLeading = false) {
+    const plain = String(text ?? '').replace(/\|c[0-9a-fA-F]{6,8}|\|r/g, '');
+    const leading = preserveLeading ? (plain.match(/^[ \t]+/) || [''])[0] : '';
+    return leading + plain.replace(/\s+/g, ' ').trim();
+  }
+
+  function normalizeOriginalForCompare(text) {
+    return cleanWtsText(text, true).toLowerCase();
+  }
+
+  function buildContentIndex(data) {
+    const index = new Map();
+    for (const [key, entry] of Object.entries(data)) {
+      const c = normalizeOriginalForCompare(entry.original);
+      if (!index.has(c)) index.set(c, key);
+    }
+    return index;
+  }
+
+  function buildGroups(dataArray) {
+    const map = new Map();
+    for (const item of dataArray) {
+      const pattern = makePattern(item.original);
+      if (!map.has(pattern)) map.set(pattern, []);
+      map.get(pattern).push(item);
+    }
+    const groups = [];
+    for (const [pattern, members] of map) {
+      members.sort((a, b) => parseInt(a.key) - parseInt(b.key));
+      groups.push({ pattern, members });
+    }
+    groups.sort((a, b) => parseInt(a.members[0].key) - parseInt(b.members[0].key));
+    return groups;
+  }
+
+  function computeDuplicateGroups(structure) {
+    const map = new Map();
+    for (const s of structure) {
+      if (s.isEmpty) continue;
+      const content = stripLineBreaks(s.content == null ? '' : String(s.content));
+      if (content === '') continue;
+      const norm = normalizeOriginalForCompare(content);
+      if (!map.has(norm)) map.set(norm, []);
+      map.get(norm).push(String(s.id));
+    }
+    const result = new Map();
+    for (const [norm, ids] of map) if (ids.length > 1) result.set(norm, ids);
+    return result;
+  }
+
+  function getDuplicatesForKey(key) {
+    const item = allData.find(d => d.key === key);
+    if (!item) return [];
+    const norm = normalizeOriginalForCompare(item.original);
+    const ids = duplicateGroups.get(norm) || [];
+    return ids.filter(id => id !== String(key));
+  }
+
+  function persistDuplicateGroups(groups) {
+    const arr = [];
+    for (const [, ids] of groups) arr.push({ ids });
+    return metadataRef.child('duplicateGroups').set(arr);
+  }
+
+  function findAllStructureIndicesByContent(oldContent) {
+    const norm = normalizeOriginalForCompare(oldContent);
+    const indices = [];
+    for (let i = 0; i < lastImportStructure.length; i++) {
+      const s = lastImportStructure[i];
+      if (s.isEmpty) continue;
+      if (normalizeOriginalForCompare(s.content == null ? '' : String(s.content)) === norm) {
+        indices.push(i);
+      }
+    }
+    return indices;
+  }
+
+  function getCurrentUserInfo() {
+    if (currentUser) {
+      return { uid: currentUser.uid, displayName: currentDisplayName, role: currentUserRole, canManageDb: currentUserCanManageDb };
+    }
+    return { uid: null, displayName: 'Аноним', role: 'translator', canManageDb: false };
   }
 
   // ========== АВТОРИЗАЦИЯ ==========
@@ -709,94 +864,20 @@
 
   auth.onAuthStateChanged(user => { updateAuthUI(user); });
 
-  // ========== ВСПОМОГАТЕЛЬНЫЕ ==========
-  function getCurrentUserInfo() {
-    if (currentUser) {
-      return { uid: currentUser.uid, displayName: currentDisplayName, role: currentUserRole, canManageDb: currentUserCanManageDb };
-    }
-    return { uid: null, displayName: 'Аноним', role: 'translator', canManageDb: false };
-  }
-
-  function hasRussian(text) { return /[а-яё]/i.test(text); }
-
-  function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
-
-  function formatTimestamp(ts) {
-    if (!ts) return '';
-    const d = new Date(ts);
-    return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-  }
-
-  function makePattern(str) {
-    if (!str) return '';
-    let cleaned = cleanWtsText(str, true);
-    cleaned = cleaned.replace(/\d+(?:\.\d+)?/g, '#');
-    cleaned = cleaned.replace(/<[^>]+>/g, '<TAG>');
-    return cleaned;
-  }
-
-  function extractNumbers(str) {
-    const matches = str.match(/\d+(?:\.\d+)?/g);
-    return matches ? matches.map(Number) : [];
-  }
-
-  function applyTranslationToMember(templateTranslation, original) {
-    const numbers = extractNumbers(original);
-    let index = 0;
-    return templateTranslation.replace(/\d+(?:\.\d+)?/g, function(match) {
-      if (index < numbers.length) {
-        return numbers[index++];
-      }
-      return match;
-    });
-  }
-
-  // Нормализация применяется только к ключам сравнения, не к тексту в БД.
-  function cleanWtsText(text, preserveLeading = false) {
-    const plain = String(text ?? '').replace(/\|c[0-9a-fA-F]{6,8}|\|r/g, '');
-    const leading = preserveLeading ? (plain.match(/^[ \t]+/) || [''])[0] : '';
-    return leading + plain.replace(/\s+/g, ' ').trim();
-  }
-
-  function normalizeOriginalForCompare(text) {
-    return cleanWtsText(text, true).toLowerCase();
-  }
-
-  function buildContentIndex(data) {
-    const index = new Map();
-    for (const [key, entry] of Object.entries(data)) {
-      const c = normalizeOriginalForCompare(entry.original);
-      if (!index.has(c)) index.set(c, key);
-    }
-    return index;
-  }
-
-  function buildGroups(dataArray) {
-    const map = new Map();
-    for (const item of dataArray) {
-      const pattern = makePattern(item.original);
-      if (!map.has(pattern)) map.set(pattern, []);
-      map.get(pattern).push(item);
-    }
-    const groups = [];
-    for (const [pattern, members] of map) {
-      members.sort((a, b) => parseInt(a.key) - parseInt(b.key));
-      groups.push({ pattern, members });
-    }
-    groups.sort((a, b) => parseInt(a.members[0].key) - parseInt(b.members[0].key));
-    return groups;
-  }
-
+  // ========== ФИЛЬТРАЦИЯ ==========
   function getFilteredData() {
     let filtered = allData;
 
-    if (filterByImported.checked && importedNumbers.length > 0) {
-      const imported = new Set(importedNumbers);
-      filtered = filtered.filter(item => imported.has(item.key));
+    if (filterHideUnnecessary.checked) {
+      if (importedNumbers.length > 0) {
+        const imported = new Set(importedNumbers.map(String));
+        filtered = filtered.filter(item => imported.has(String(item.key)));
+      }
+      filtered = filtered.filter(item => hasRussian(item.original));
+      filtered = filtered.filter(item => {
+        const comment = (item.wtsComment || '').toLowerCase();
+        return !comment.includes('editorsuffix');
+      });
     }
 
     if (filterInactive.checked) {
@@ -813,24 +894,17 @@
       });
     }
 
-    if (filterOnlyRussian.checked) {
-      filtered = filtered.filter(item => hasRussian(item.original));
-    }
     if (filterNoTranslation.checked) {
       filtered = filtered.filter(item => item.translation === '');
     }
-    if (filterHideEditorSuffix.checked) {
-      filtered = filtered.filter(item => {
-        const comment = item.wtsComment || '';
-        return !comment.toLowerCase().includes('editorsuffix');
-      });
-    }
+
     if (filterUnconfirmed.checked) {
       filtered = filtered.filter(item => {
         const hasTranslation = item.translation !== '';
         return hasTranslation && !item.confirmed;
       });
     }
+
     return filtered;
   }
 
@@ -879,6 +953,7 @@
         confirmed: false,
         confirmedBy: '',
         confirmedByName: ''
+        // lastConfirmed* поля НЕ трогаем — они сохраняют последнюю утверждённую версию
       };
       for (const [field, value] of Object.entries(update)) {
         updates[`${member.key}/${field}`] = value;
@@ -887,18 +962,143 @@
     stringsRef.update(updates).catch(err => alert('Ошибка сохранения: ' + err.message));
   }
 
-  // ========== РЕДАКТИРОВАНИЕ ОРИГИНАЛА ==========
-  function findStructureIndexForKey(key, oldContent) {
-    for (let i = 0; i < lastImportStructure.length; i++) {
-      if (String(lastImportStructure[i].id) === String(key)) return i;
+  // ========== ПОДТВЕРЖДЕНИЕ ПЕРЕВОДА ==========
+  function handleConfirmToggle(e) {
+    const btn = e.currentTarget;
+    const key = btn.dataset.key;
+    const item = allData.find(d => d.key === key);
+    if (!item) return;
+    if (item.translation === '') {
+      alert('Невозможно подтвердить: перевод отсутствует.');
+      return;
     }
-    const normOld = normalizeOriginalForCompare(oldContent);
-    for (let i = 0; i < lastImportStructure.length; i++) {
-      if (normalizeOriginalForCompare(lastImportStructure[i].content) === normOld) return i;
+    const user = getCurrentUserInfo();
+    if (user.role !== 'editor') {
+      alert('Только редакторы могут подтверждать переводы.');
+      return;
     }
-    return -1;
+    const newConfirmed = !item.confirmed;
+    const updateData = {
+      confirmed: newConfirmed,
+      confirmedBy: newConfirmed ? user.uid : null,
+      confirmedByName: newConfirmed ? user.displayName : null
+    };
+
+    if (newConfirmed) {
+      // Сохраняем текущий перевод как последний подтверждённый
+      updateData.lastConfirmedTranslation = item.translation;
+      updateData.lastConfirmedTranslationAuthor = item.translationAuthor || '';
+      updateData.lastConfirmedTranslationAuthorName = item.translationAuthorName || '';
+      updateData.lastConfirmedBy = user.uid;
+      updateData.lastConfirmedByName = user.displayName;
+      updateData.lastConfirmedAt = Date.now();
+    }
+    // При снятии подтверждения lastConfirmed* остаются нетронутыми
+
+    stringsRef.child(key).update(updateData)
+      .then(() => {
+        item.confirmed = newConfirmed;
+        item.confirmedBy = newConfirmed ? user.uid : null;
+        item.confirmedByName = newConfirmed ? user.displayName : null;
+        if (newConfirmed) {
+          item.lastConfirmedTranslation = item.translation;
+          item.lastConfirmedTranslationAuthor = item.translationAuthor || '';
+          item.lastConfirmedTranslationAuthorName = item.translationAuthorName || '';
+          item.lastConfirmedBy = user.uid;
+          item.lastConfirmedByName = user.displayName;
+          item.lastConfirmedAt = Date.now();
+        }
+        render();
+      })
+      .catch(err => alert('Ошибка обновления подтверждения: ' + err.message));
   }
 
+  // ========== ПОСЛЕДНИЙ ПОДТВЕРЖДЁННЫЙ ПЕРЕВОД ==========
+  function showLastConfirmedModal(key) {
+    const item = allData.find(d => d.key === key);
+    if (!item || !item.lastConfirmedTranslation) {
+      alert('Для этой фразы ещё нет сохранённого последнего подтверждённого перевода.');
+      return;
+    }
+    const currentTranslation = item.translation || '';
+    const lastConfirmed = item.lastConfirmedTranslation;
+    const confirmedBy = item.lastConfirmedByName || 'Аноним';
+    const confirmedAt = item.lastConfirmedAt ? formatTimestamp(item.lastConfirmedAt) : '';
+    const lastAuthorName = item.lastConfirmedTranslationAuthorName || '';
+    const isSame = currentTranslation === lastConfirmed;
+    const needsRestore = !isSame || !item.confirmed;
+
+    lastConfirmedTitle.textContent = `Последний подтверждённый перевод #${key}`;
+
+    let html = `
+      <div class="modal-item">
+        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">📝 Текущий перевод:</div>
+        <div class="last-confirmed-block ${isSame ? 'confirmed-now' : ''}">
+          ${escapeHtml(currentTranslation || '(пусто)')}
+        </div>
+        ${item.confirmed ? '<div class="last-confirmed-meta" style="color:#2e7d32;">✅ Подтверждён</div>' : ''}
+      </div>
+      <div class="modal-item">
+        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">📜 Последний подтверждённый:</div>
+        <div class="last-confirmed-block confirmed-now">${escapeHtml(lastConfirmed)}</div>
+        <div class="last-confirmed-meta">✅ Подтвердил: ${escapeHtml(confirmedBy)}${confirmedAt ? ' — ' + confirmedAt : ''}</div>
+        ${lastAuthorName ? `<div class="last-confirmed-meta">✍️ Автор перевода: ${escapeHtml(lastAuthorName)}</div>` : ''}
+      </div>
+      <div style="margin-top: 16px; text-align: center;">
+        ${needsRestore
+          ? `<button class="restore-last-confirmed-btn" data-key="${escapeHtml(key)}">↩️ Восстановить и подтвердить</button>`
+          : `<div style="color: #2e7d32; font-size: 13px;">Текущий перевод уже совпадает с последним подтверждённым.</div>`}
+      </div>
+    `;
+    lastConfirmedContent.innerHTML = html;
+    lastConfirmedModal.classList.add('active');
+  }
+
+  function restoreLastConfirmed(key) {
+    const item = allData.find(d => d.key === key);
+    if (!item || !item.lastConfirmedTranslation) return;
+    const confirmedBy = item.lastConfirmedByName || 'Аноним';
+    if (!confirm(
+      `Восстановить последний подтверждённый перевод?\n\n` +
+      `Текущий: "${item.translation || '(пусто)'}"\n` +
+      `Будет заменён на: "${item.lastConfirmedTranslation}"\n\n` +
+      `Статус: ✅ подтверждён (${confirmedBy})`
+    )) return;
+
+    const updates = {
+      translation: item.lastConfirmedTranslation,
+      translationAuthor: item.lastConfirmedTranslationAuthor || '',
+      translationAuthorName: item.lastConfirmedTranslationAuthorName || '',
+      confirmed: true,
+      confirmedBy: item.lastConfirmedBy || '',
+      confirmedByName: item.lastConfirmedByName || ''
+      // lastConfirmed* не трогаем — они и так указывают на это значение
+    };
+
+    stringsRef.child(key).update(updates)
+      .then(() => {
+        item.translation = item.lastConfirmedTranslation;
+        item.translationAuthor = item.lastConfirmedTranslationAuthor || '';
+        item.translationAuthorName = item.lastConfirmedTranslationAuthorName || '';
+        item.confirmed = true;
+        item.confirmedBy = item.lastConfirmedBy || '';
+        item.confirmedByName = item.lastConfirmedByName || '';
+        lastConfirmedModal.classList.remove('active');
+        render();
+      })
+      .catch(err => alert('Ошибка восстановления: ' + err.message));
+  }
+
+  lastConfirmedClose.addEventListener('click', () => lastConfirmedModal.classList.remove('active'));
+  lastConfirmedModal.addEventListener('click', (e) => {
+    if (e.target === lastConfirmedModal) lastConfirmedModal.classList.remove('active');
+  });
+  lastConfirmedContent.addEventListener('click', (e) => {
+    const btn = e.target.closest('.restore-last-confirmed-btn');
+    if (btn && btn.dataset.key) restoreLastConfirmed(btn.dataset.key);
+  });
+
+  // ========== РЕДАКТИРОВАНИЕ ОРИГИНАЛА ==========
   function saveOriginalEdit(key, newOriginal) {
     const user = getCurrentUserInfo();
     if (user.role !== 'editor') {
@@ -921,32 +1121,145 @@
 
     if (newContent === '') {
       if (!confirm('Оригинал станет пустым. При экспорте будет выведена пустая строка. Продолжить?')) return;
-    } else {
-      const newNorm = normalizeOriginalForCompare(newContent);
-      const duplicate = allData.find(d => d.key !== key && normalizeOriginalForCompare(d.original) === newNorm);
-      if (duplicate) {
-        if (!confirm(`Внимание: фраза с таким оригиналом уже существует (#${duplicate.key}). Продолжить?`)) return;
-      }
     }
 
-    const structIdx = findStructureIndexForKey(key, oldOriginal);
+    const oldNorm = normalizeOriginalForCompare(oldContent);
+    const newNorm = normalizeOriginalForCompare(newContent);
+    const structIndices = findAllStructureIndicesByContent(oldContent);
+
+    let existingKey = null;
+    if (newContent !== '' && oldNorm !== newNorm) {
+      existingKey = allData.find(d =>
+        d.key !== key && normalizeOriginalForCompare(d.original) === newNorm);
+    }
+
     const updates = {};
-    updates[`strings/${key}/original`] = newContent;
-    if (structIdx >= 0) {
-      updates[`metadata/lastImportStructure/${structIdx}/content`] = newContent;
-      updates[`metadata/lastImportStructure/${structIdx}/isEmpty`] = newContent === '';
+
+    if (existingKey) {
+      const targetKey = existingKey.key;
+      const target = existingKey;
+      if (!confirm(
+        `Фраза с таким оригиналом уже существует (#${targetKey}).\n` +
+        `Произойдёт слияние: #${key} будет удалена, её перевод и комментарии перейдут в #${targetKey}.\n\nПродолжить?`
+      )) return;
+
+      if (!target.translation && item.translation) {
+        updates[`strings/${targetKey}/translation`] = item.translation;
+        updates[`strings/${targetKey}/translationAuthor`] = item.translationAuthor || '';
+        updates[`strings/${targetKey}/translationAuthorName`] = item.translationAuthorName || '';
+        updates[`strings/${targetKey}/confirmed`] = item.confirmed || false;
+        updates[`strings/${targetKey}/confirmedBy`] = item.confirmedBy || '';
+        updates[`strings/${targetKey}/confirmedByName`] = item.confirmedByName || '';
+        if (item.lastConfirmedTranslation) {
+          updates[`strings/${targetKey}/lastConfirmedTranslation`] = item.lastConfirmedTranslation;
+          updates[`strings/${targetKey}/lastConfirmedTranslationAuthor`] = item.lastConfirmedTranslationAuthor || '';
+          updates[`strings/${targetKey}/lastConfirmedTranslationAuthorName`] = item.lastConfirmedTranslationAuthorName || '';
+          updates[`strings/${targetKey}/lastConfirmedBy`] = item.lastConfirmedBy || '';
+          updates[`strings/${targetKey}/lastConfirmedByName`] = item.lastConfirmedByName || '';
+          updates[`strings/${targetKey}/lastConfirmedAt`] = item.lastConfirmedAt || 0;
+        }
+      } else if (target.translation && item.translation && target.translation !== item.translation) {
+        const useSource = confirm(
+          `У #${targetKey} перевод: "${target.translation}"\n` +
+          `У #${key} перевод: "${item.translation}"\n\n` +
+          `Использовать перевод из #${key}? (Отмена — оставить перевод #${targetKey})`
+        );
+        if (useSource) {
+          updates[`strings/${targetKey}/translation`] = item.translation;
+          updates[`strings/${targetKey}/translationAuthor`] = item.translationAuthor || '';
+          updates[`strings/${targetKey}/translationAuthorName`] = item.translationAuthorName || '';
+          updates[`strings/${targetKey}/confirmed`] = item.confirmed || false;
+          updates[`strings/${targetKey}/confirmedBy`] = item.confirmedBy || '';
+          updates[`strings/${targetKey}/confirmedByName`] = item.confirmedByName || '';
+          if (item.lastConfirmedTranslation) {
+            updates[`strings/${targetKey}/lastConfirmedTranslation`] = item.lastConfirmedTranslation;
+            updates[`strings/${targetKey}/lastConfirmedTranslationAuthor`] = item.lastConfirmedTranslationAuthor || '';
+            updates[`strings/${targetKey}/lastConfirmedTranslationAuthorName`] = item.lastConfirmedTranslationAuthorName || '';
+            updates[`strings/${targetKey}/lastConfirmedBy`] = item.lastConfirmedBy || '';
+            updates[`strings/${targetKey}/lastConfirmedByName`] = item.lastConfirmedByName || '';
+            updates[`strings/${targetKey}/lastConfirmedAt`] = item.lastConfirmedAt || 0;
+          }
+        }
+      }
+
+      const targetComments = target.userComments || [];
+      const sourceComments = item.userComments || [];
+      if (sourceComments.length > 0) {
+        updates[`strings/${targetKey}/userComments`] =
+          [...targetComments, ...sourceComments].slice(-50);
+      }
+
+      updates[`strings/${key}`] = null;
+
+      for (const idx of structIndices) {
+        updates[`metadata/lastImportStructure/${idx}/content`] = newContent;
+        updates[`metadata/lastImportStructure/${idx}/isEmpty`] = newContent === '';
+      }
+    } else {
+      updates[`strings/${key}/original`] = newContent;
+      updates[`strings/${key}/originalEditedBy`] = user.uid;
+      updates[`strings/${key}/originalEditedByName`] = user.displayName;
+      updates[`strings/${key}/originalEditedAt`] = Date.now();
+
+      if (oldNorm !== newNorm && item.translation) {
+        updates[`strings/${key}/confirmed`] = false;
+        updates[`strings/${key}/confirmedBy`] = '';
+        updates[`strings/${key}/confirmedByName`] = '';
+      }
+
+      for (const idx of structIndices) {
+        updates[`metadata/lastImportStructure/${idx}/content`] = newContent;
+        updates[`metadata/lastImportStructure/${idx}/isEmpty`] = newContent === '';
+      }
     }
 
     db.ref().update(updates)
       .then(() => {
-        item.original = newContent;
-        if (structIdx >= 0) {
-          lastImportStructure[structIdx] = {
-            ...lastImportStructure[structIdx],
+        if (existingKey) {
+          allData = allData.filter(d => d.key !== key);
+          const targetItem = allData.find(d => d.key === existingKey.key);
+          if (targetItem) {
+            if (!targetItem.translation && item.translation) {
+              targetItem.translation = item.translation;
+              targetItem.translationAuthor = item.translationAuthor;
+              targetItem.translationAuthorName = item.translationAuthorName;
+              targetItem.confirmed = item.confirmed;
+              targetItem.confirmedBy = item.confirmedBy;
+              targetItem.confirmedByName = item.confirmedByName;
+              if (item.lastConfirmedTranslation) {
+                targetItem.lastConfirmedTranslation = item.lastConfirmedTranslation;
+                targetItem.lastConfirmedTranslationAuthor = item.lastConfirmedTranslationAuthor;
+                targetItem.lastConfirmedTranslationAuthorName = item.lastConfirmedTranslationAuthorName;
+                targetItem.lastConfirmedBy = item.lastConfirmedBy;
+                targetItem.lastConfirmedByName = item.lastConfirmedByName;
+                targetItem.lastConfirmedAt = item.lastConfirmedAt;
+              }
+            }
+            if (item.userComments && item.userComments.length > 0) {
+              targetItem.userComments =
+                [...(targetItem.userComments || []), ...item.userComments].slice(-50);
+            }
+          }
+        } else {
+          item.original = newContent;
+          item.originalEditedBy = user.uid;
+          item.originalEditedByName = user.displayName;
+          item.originalEditedAt = Date.now();
+          if (oldNorm !== newNorm && item.translation) {
+            item.confirmed = false;
+            item.confirmedBy = '';
+            item.confirmedByName = '';
+          }
+        }
+        for (const idx of structIndices) {
+          lastImportStructure[idx] = {
+            ...lastImportStructure[idx],
             content: newContent,
             isEmpty: newContent === ''
           };
         }
+        duplicateGroups = computeDuplicateGroups(lastImportStructure);
+        persistDuplicateGroups(duplicateGroups).catch(err => console.warn('duplicateGroups:', err));
         editingOriginalKey = null;
         render();
       })
@@ -973,9 +1286,7 @@
     }
 
     const updates = {};
-    for (const k of matchingKeys) {
-      updates[k + '/inactive'] = newState;
-    }
+    for (const k of matchingKeys) updates[k + '/inactive'] = newState;
 
     stringsRef.update(updates)
       .then(() => { render(); })
@@ -1047,6 +1358,11 @@
     similarModal.classList.add('active');
   }
 
+  similarModalClose.addEventListener('click', () => { similarModal.classList.remove('active'); });
+  similarModal.addEventListener('click', (e) => {
+    if (e.target === similarModal) similarModal.classList.remove('active');
+  });
+
   // ========== РЕНДЕРИНГ ==========
   function render() {
     try {
@@ -1071,7 +1387,7 @@
       const filteredCount = getFilteredData().length;
       const searchTerm = searchInput.value.trim();
       let statsText = `Всего: ${totalAll} | Отфильтровано: ${filteredCount} | Показано: ${totalDisplay}`;
-      if (filterByImported.checked && importedNumbers.length > 0) statsText += ` (только загруженные)`;
+      if (filterHideUnnecessary.checked) statsText += ` (без служебных)`;
       if (searchTerm !== '') statsText += ` | Поиск: "${searchTerm}"`;
       statsSpan.textContent = statsText;
 
@@ -1095,6 +1411,7 @@
         const confirmed = item.confirmed || false;
         const confirmedByName = item.confirmedByName || '';
         const inactive = item.inactive || false;
+        const lastConfirmedTranslation = item.lastConfirmedTranslation || '';
         const safeKey = key.replace(/"/g, '&quot;');
 
         let groupInfo = '';
@@ -1131,6 +1448,24 @@
 
         const similarButton = `<button class="similar-btn" data-key="${safeKey}">🔍 Похожие</button>`;
 
+        let lastConfirmedButton = '';
+        if (lastConfirmedTranslation) {
+          const tooltip = `Последняя подтверждённая версия${item.lastConfirmedByName ? ' (' + item.lastConfirmedByName + ')' : ''}`;
+          lastConfirmedButton = `<button class="last-confirmed-btn" data-key="${safeKey}" title="${escapeHtml(tooltip)}">📜</button>`;
+        }
+
+        let duplicateInfo = '';
+        if (user.role === 'editor') {
+          const dups = getDuplicatesForKey(key);
+          if (dups.length > 0) {
+            duplicateInfo = `<div class="duplicate-info" title="Эти ID имеют такой же оригинал">🔗 Также: #${dups.join(', #')}</div>`;
+          }
+        }
+        let originalAuthorInfo = '';
+        if (item.originalEditedByName) {
+          originalAuthorInfo = `<div class="original-author-info">✏️ Изменено: ${escapeHtml(item.originalEditedByName)}${item.originalEditedAt ? ' — ' + formatTimestamp(item.originalEditedAt) : ''}</div>`;
+        }
+
         let commentHtml = '';
         if (wtsComment) {
           commentHtml += `<div class="wts-comment">📄 Из файла: ${escapeHtml(wtsComment)}</div>`;
@@ -1158,8 +1493,6 @@
         if (inactive) entryClasses += ' inactive';
         if (groupMode.checked && item._groupMembers && item._groupMembers.length > 1) entryClasses += ' group-header';
 
-        const groupDataEncoded = item._groupMembers ? encodeURIComponent(JSON.stringify(item._groupMembers)) : '';
-
         let leftColHtml;
         if (isEditMode) {
           if (editingOriginalKey === key) {
@@ -1172,6 +1505,8 @@
                   <button class="original-cancel-btn" data-key="${safeKey}">✖ Отмена</button>
                 </div>
                 ${groupInfo ? `<div class="group-info">${groupInfo}</div>` : ''}
+                ${duplicateInfo}
+                ${originalAuthorInfo}
               </div>
             `;
           } else {
@@ -1181,6 +1516,8 @@
                 <div class="original">${escapeHtml(original)}</div>
                 <button class="original-edit-btn" data-key="${safeKey}">✏️ Изменить оригинал</button>
                 ${groupInfo ? `<div class="group-info">${groupInfo}</div>` : ''}
+                ${duplicateInfo}
+                ${originalAuthorInfo}
               </div>
             `;
           }
@@ -1190,6 +1527,8 @@
               <div class="meta">#${key}</div>
               <div class="original">${escapeHtml(original)}</div>
               ${groupInfo ? `<div class="group-info">${groupInfo}</div>` : ''}
+              ${duplicateInfo}
+              ${originalAuthorInfo}
             </div>
           `;
         }
@@ -1197,7 +1536,7 @@
         const rightColHtml = `
           <div class="right-col">
             <div class="translation-row">
-              <textarea class="translation-input" rows="1" data-key="${safeKey}" placeholder="Введите перевод... (Enter для переноса)">${escapeHtml(translation)}</textarea>
+              <textarea class="translation-input" rows="1" data-key="${safeKey}" placeholder="Введите перевод... (Ctrl+Enter — сохранить)">${escapeHtml(translation)}</textarea>
               <button class="save-translation-btn" data-key="${safeKey}">Сохранить перевод</button>
             </div>
             <div class="author-info">
@@ -1206,12 +1545,13 @@
               ${confirmButton}
               ${inactiveButton}
               ${similarButton}
+              ${lastConfirmedButton}
             </div>
           </div>
         `;
 
         html += `
-          <div class="${entryClasses}" data-key="${safeKey}" data-group="${groupDataEncoded}">
+          <div class="${entryClasses}" data-key="${safeKey}">
             ${leftColHtml}
             ${rightColHtml}
             <div class="comment-section">
@@ -1231,6 +1571,7 @@
         '.confirm-btn': { click: handleConfirmToggle },
         '.inactive-btn': { click: handleInactiveToggle },
         '.similar-btn': { click: handleSimilar },
+        '.last-confirmed-btn': { click: handleLastConfirmedClick },
         '.original-edit-btn': { click: handleOriginalEditClick },
         '.original-save-btn': { click: handleOriginalSaveClick },
         '.original-cancel-btn': { click: handleOriginalCancelClick }
@@ -1242,6 +1583,8 @@
         }
       }
       container.querySelectorAll('.original-edit-input').forEach(textarea => {
+        autoResize(textarea);
+        textarea.addEventListener('input', () => autoResize(textarea));
         textarea.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
@@ -1252,9 +1595,7 @@
             render();
           }
         });
-        if (editingOriginalKey === textarea.dataset.key) {
-          textarea.focus();
-        }
+        if (editingOriginalKey === textarea.dataset.key) textarea.focus();
       });
     } catch (err) {
       console.error('Ошибка при рендеринге:', err);
@@ -1281,8 +1622,8 @@
   }
 
   function handleInactiveToggle(e) { toggleInactive(e.currentTarget.dataset.key); }
-
   function handleSimilar(e) { showSimilarTranslations(e.currentTarget.dataset.key); }
+  function handleLastConfirmedClick(e) { showLastConfirmedModal(e.currentTarget.dataset.key); }
 
   function handleOriginalEditClick(e) {
     editingOriginalKey = e.currentTarget.dataset.key;
@@ -1366,49 +1707,10 @@
   commentsModal.addEventListener('click', (e) => {
     if (e.target === commentsModal) commentsModal.classList.remove('active');
   });
-  similarModalClose.addEventListener('click', () => { similarModal.classList.remove('active'); });
-  similarModal.addEventListener('click', (e) => {
-    if (e.target === similarModal) similarModal.classList.remove('active');
-  });
-
-  function handleConfirmToggle(e) {
-    const btn = e.currentTarget;
-    const key = btn.dataset.key;
-    const item = allData.find(d => d.key === key);
-    if (!item) return;
-    if (item.translation === '') {
-      alert('Невозможно подтвердить: перевод отсутствует.');
-      return;
-    }
-    const user = getCurrentUserInfo();
-    if (user.role !== 'editor') {
-      alert('Только редакторы могут подтверждать переводы.');
-      return;
-    }
-    const newConfirmed = !item.confirmed;
-    const updateData = {
-      confirmed: newConfirmed,
-      confirmedBy: newConfirmed ? user.uid : null,
-      confirmedByName: newConfirmed ? user.displayName : null
-    };
-    stringsRef.child(key).update(updateData)
-      .then(() => {
-        if (item) {
-          item.confirmed = newConfirmed;
-          item.confirmedBy = newConfirmed ? user.uid : null;
-          item.confirmedByName = newConfirmed ? user.displayName : null;
-        }
-        render();
-      })
-      .catch(err => alert('Ошибка обновления подтверждения: ' + err.message));
-  }
 
   // ========== ПАРСИНГ WTS ==========
   function parseWTS(text) {
-    if (text && text.charCodeAt(0) === 0xFEFF) {
-      text = text.slice(1);
-    }
-
+    if (text && text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
     const regex = /(?:\/\/[ \t]*([^\n]*)[ \t]*\r?\n[ \t]*)?STRING[ \t]+(\d+)(?:[ \t]*\/\/[ \t]*([^\n]*))?[ \t]*(?:\r?\n[ \t]*\/\/[ \t]*([^\n]*))?[ \t]*\r?\n?[ \t]*\{([\s\S]*?)\}/g;
     const entries = [];
     let match;
@@ -1501,7 +1803,6 @@
           const c = norm(p.content);
           const existing = existingByContent.get(c);
           const targetKey = String(p.number);
-
           const inactiveFinal = inactiveByContent.has(c);
 
           finalMap.set(targetKey, {
@@ -1515,7 +1816,16 @@
             confirmed: existing ? (existing.confirmed || false) : false,
             confirmedBy: existing ? (existing.confirmedBy || '') : '',
             confirmedByName: existing ? (existing.confirmedByName || '') : '',
-            inactive: inactiveFinal
+            inactive: inactiveFinal,
+            lastConfirmedTranslation: existing ? (existing.lastConfirmedTranslation || '') : '',
+            lastConfirmedTranslationAuthor: existing ? (existing.lastConfirmedTranslationAuthor || '') : '',
+            lastConfirmedTranslationAuthorName: existing ? (existing.lastConfirmedTranslationAuthorName || '') : '',
+            lastConfirmedBy: existing ? (existing.lastConfirmedBy || '') : '',
+            lastConfirmedByName: existing ? (existing.lastConfirmedByName || '') : '',
+            lastConfirmedAt: existing ? (existing.lastConfirmedAt || 0) : 0,
+            originalEditedBy: existing ? (existing.originalEditedBy || '') : '',
+            originalEditedByName: existing ? (existing.originalEditedByName || '') : '',
+            originalEditedAt: existing ? (existing.originalEditedAt || 0) : 0
           });
         }
 
@@ -1534,12 +1844,20 @@
             confirmed: item.confirmed || false,
             confirmedBy: item.confirmedBy || '',
             confirmedByName: item.confirmedByName || '',
-            inactive: item.inactive || false
+            inactive: item.inactive || false,
+            lastConfirmedTranslation: item.lastConfirmedTranslation || '',
+            lastConfirmedTranslationAuthor: item.lastConfirmedTranslationAuthor || '',
+            lastConfirmedTranslationAuthorName: item.lastConfirmedTranslationAuthorName || '',
+            lastConfirmedBy: item.lastConfirmedBy || '',
+            lastConfirmedByName: item.lastConfirmedByName || '',
+            lastConfirmedAt: item.lastConfirmedAt || 0,
+            originalEditedBy: item.originalEditedBy || '',
+            originalEditedByName: item.originalEditedByName || '',
+            originalEditedAt: item.originalEditedAt || 0
           };
         }
 
         const relocatedCount = itemsToRelocate.length;
-
         const numbers = parsed.map(item => item.number);
         const structure = allParsed.map(item => ({
           id: String(item.number),
@@ -1548,23 +1866,31 @@
           isEmpty: item.isEmpty === true
         }));
         const emptyIds = emptyParsed.map(item => String(item.number));
+
+        const dupGroups = computeDuplicateGroups(structure);
+        const dupGroupsArr = [];
+        for (const [, ids] of dupGroups) dupGroupsArr.push({ ids });
+
         const rootUpdates = { metadata: {
           importedNumbers: numbers,
           lastImportStructure: structure,
-          emptyStringIds: emptyIds
+          emptyStringIds: emptyIds,
+          duplicateGroups: dupGroupsArr
         } };
         for (const [key, value] of Object.entries(updates)) rootUpdates[`strings/${key}`] = value;
+
         db.ref().update(rootUpdates)
           .then(() => {
             importedNumbers = numbers;
             lastImportStructure = structure;
             emptyStringIds = emptyIds;
-            filterByImported.checked = true;
+            duplicateGroups = dupGroups;
+            filterHideUnnecessary.checked = true;
             currentPage = 0;
 
             let msg = `Импортировано ${parsed.length} непустых строк`;
             if (emptyParsed.length > 0) msg += ` и ${emptyParsed.length} пустых (будут выведены при экспорте)`;
-            msg += `. Включён фильтр "Только загруженные".`;
+            msg += `. Включён фильтр "Скрыть ненужные фразы".`;
             if (relocatedCount > 0) msg += `\nПеренесено старых фраз (конфликт по ID): ${relocatedCount}.`;
             alert(msg);
             render();
@@ -1647,6 +1973,14 @@
           updateData.confirmed = shouldConfirm;
           updateData.confirmedBy = shouldConfirm ? user.uid : '';
           updateData.confirmedByName = shouldConfirm ? user.displayName : '';
+          if (shouldConfirm) {
+            updateData.lastConfirmedTranslation = transContent;
+            updateData.lastConfirmedTranslationAuthor = user.uid;
+            updateData.lastConfirmedTranslationAuthorName = user.displayName;
+            updateData.lastConfirmedBy = user.uid;
+            updateData.lastConfirmedByName = user.displayName;
+            updateData.lastConfirmedAt = Date.now();
+          }
           updates[dbKey] = updateData;
           added++;
         }
@@ -1762,9 +2096,7 @@
 
   // ========== РЕЖИМ РЕДАКТИРОВАНИЯ ОРИГИНАЛА ==========
   editOriginalModeCheckbox.addEventListener('change', () => {
-    if (!editOriginalModeCheckbox.checked) {
-      editingOriginalKey = null;
-    }
+    if (!editOriginalModeCheckbox.checked) editingOriginalKey = null;
     render();
   });
 
@@ -1835,6 +2167,7 @@
             importedNumbers = Array.isArray(metadataData.importedNumbers) ? metadataData.importedNumbers : [];
             lastImportStructure = Array.isArray(metadataData.lastImportStructure) ? metadataData.lastImportStructure : [];
             emptyStringIds = Array.isArray(metadataData.emptyStringIds) ? metadataData.emptyStringIds : [];
+            duplicateGroups = computeDuplicateGroups(lastImportStructure);
             currentPage = 0;
             alert(`База данных успешно восстановлена.\nВосстановлено фраз: ${stringsCount}`);
             render();
@@ -1894,12 +2227,10 @@
 
   searchInput.addEventListener('input', () => { currentPage = 0; render(); });
 
-  for (const filter of [filterOnlyRussian, filterNoTranslation, filterHideEditorSuffix,
-    filterUnconfirmed, filterByImported, filterInactive, groupMode]) {
+  for (const filter of [filterHideUnnecessary, filterNoTranslation,
+    filterUnconfirmed, filterInactive, groupMode]) {
     filter.addEventListener('change', () => { currentPage = 0; render(); });
   }
-
-  refreshBtn.addEventListener('click', () => { stringsRef.once('value', () => render()); });
 
   // ========== МЕТАДАННЫЕ ==========
   metadataRef.on('value', (snapshot) => {
@@ -1908,7 +2239,8 @@
       importedNumbers = data.importedNumbers;
       lastImportStructure = Array.isArray(data.lastImportStructure) ? data.lastImportStructure : [];
       emptyStringIds = Array.isArray(data.emptyStringIds) ? data.emptyStringIds : [];
-      if (filterByImported.checked) render();
+      duplicateGroups = computeDuplicateGroups(lastImportStructure);
+      if (filterHideUnnecessary.checked) render();
     }
   });
 
@@ -1918,7 +2250,8 @@
       importedNumbers = data.importedNumbers;
       lastImportStructure = Array.isArray(data.lastImportStructure) ? data.lastImportStructure : [];
       emptyStringIds = Array.isArray(data.emptyStringIds) ? data.emptyStringIds : [];
-      filterByImported.checked = true;
+      duplicateGroups = computeDuplicateGroups(lastImportStructure);
+      filterHideUnnecessary.checked = true;
       render();
     }
   });
@@ -1942,7 +2275,16 @@
         confirmed: entry.confirmed || false,
         confirmedBy: entry.confirmedBy || '',
         confirmedByName: entry.confirmedByName || '',
-        inactive: entry.inactive || false
+        inactive: entry.inactive || false,
+        lastConfirmedTranslation: entry.lastConfirmedTranslation || '',
+        lastConfirmedTranslationAuthor: entry.lastConfirmedTranslationAuthor || '',
+        lastConfirmedTranslationAuthorName: entry.lastConfirmedTranslationAuthorName || '',
+        lastConfirmedBy: entry.lastConfirmedBy || '',
+        lastConfirmedByName: entry.lastConfirmedByName || '',
+        lastConfirmedAt: entry.lastConfirmedAt || 0,
+        originalEditedBy: entry.originalEditedBy || '',
+        originalEditedByName: entry.originalEditedByName || '',
+        originalEditedAt: entry.originalEditedAt || 0
       };
     });
     render();
