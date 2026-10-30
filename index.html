@@ -622,9 +622,9 @@
   function hasRussian(text) { return /[а-яё]/i.test(text); }
 
   function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    return String(text ?? '').replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[c]);
   }
 
   function formatTimestamp(ts) {
@@ -756,6 +756,7 @@
       const uid = user.uid;
       usersRef.child(uid).once('value')
         .then((snap) => {
+          if (!currentUser || currentUser.uid !== uid) return;
           const data = snap.val() || {};
           let name = data.displayName;
           let role = data.role || 'translator';
@@ -767,6 +768,7 @@
           applyUserData(name, role, canManageDb);
         })
         .catch(() => {
+          if (!currentUser || currentUser.uid !== uid) return;
           const name = user.displayName || 'Аноним';
           applyUserData(name, 'translator', false);
         });
@@ -934,88 +936,110 @@
   }
 
   // ========== СОХРАНЕНИЕ ПЕРЕВОДА ==========
-  function saveTranslation(key, newTranslation) {
+  // Snapshot old confirmed records before any operation can replace their text.
+  function preserveConfirmed(entry) {
+    if (entry.confirmed === true && typeof entry.translation === 'string' && entry.translation !== '') {
+      entry.lastConfirmedTranslation = entry.translation;
+      entry.lastConfirmedTranslationAuthor = entry.translationAuthor || '';
+      entry.lastConfirmedTranslationAuthorName = entry.translationAuthorName || '';
+      entry.lastConfirmedBy = entry.confirmedBy || '';
+      entry.lastConfirmedByName = entry.confirmedByName || '';
+      // The confirmation date cannot be recovered for legacy records.
+      entry.lastConfirmedAt = entry.lastConfirmedAt || 0;
+    }
+    return entry;
+  }
+
+  function confirmedVersion(entry) {
+    if (!entry) return null;
+    const copy = preserveConfirmed({ ...entry });
+    return typeof copy.lastConfirmedTranslation === 'string' && copy.lastConfirmedTranslation !== '' ? copy : null;
+  }
+
+  function versionToken(entry) {
+    // Ignore comments and unrelated metadata; reject changes to the text or its approval.
+    return JSON.stringify(['original', 'translation', 'translationAuthor', 'translationAuthorName',
+      'confirmed', 'confirmedBy', 'confirmedByName', 'lastConfirmedTranslation',
+      'lastConfirmedTranslationAuthor', 'lastConfirmedTranslationAuthorName',
+      'lastConfirmedBy', 'lastConfirmedByName', 'lastConfirmedAt'].map(k => entry[k] ?? (k === 'confirmed' ? false : k === 'lastConfirmedAt' ? 0 : '')));
+  }
+
+  async function saveTranslation(key, newTranslation) {
     const item = allData.find(d => d.key === key);
-    if (!item) return;
     const user = getCurrentUserInfo();
+    if (!item || !user.uid) { alert('Для сохранения перевода войдите в аккаунт.'); return; }
     const content = stripLineBreaks(newTranslation);
     const pattern = makePattern(item.original);
     const members = groupMode.checked
       ? allData.filter(m => makePattern(m.original) === pattern) : [item];
-    const updates = {};
-    for (const member of members) {
-      const translation = stripLineBreaks(member.key === key
-        ? content : applyTranslationToMember(content, member.original));
-      const update = {
-        translation,
+    const expected = new Map(members.map(m => [m.key, versionToken(m)]));
+    const patch = entry => {
+      const translation = stripLineBreaks(entry.original === item.original
+        ? content : applyTranslationToMember(content, entry.original));
+      if (translation === (entry.translation || '')) return entry;
+      preserveConfirmed(entry);
+      return Object.assign(entry, { translation,
         translationAuthor: translation === '' ? '' : user.uid,
         translationAuthorName: translation === '' ? '' : user.displayName,
-        confirmed: false,
-        confirmedBy: '',
-        confirmedByName: ''
-        // lastConfirmed* поля НЕ трогаем — они сохраняют последнюю утверждённую версию
-      };
-      for (const [field, value] of Object.entries(update)) {
-        updates[`${member.key}/${field}`] = value;
-      }
-    }
-    stringsRef.update(updates).catch(err => alert('Ошибка сохранения: ' + err.message));
+        confirmed: false, confirmedBy: '', confirmedByName: '' });
+    };
+    try {
+      // Group changes commit together, or none of them commit.
+      const ref = members.length === 1 ? stringsRef.child(key) : stringsRef;
+      const result = await ref.transaction(current => {
+        if (!current) return;
+        if (members.length === 1) {
+          if (versionToken(current) !== expected.get(key)) return;
+          return patch(current);
+        }
+        const actualKeys = Object.keys(current).filter(k => current[k] && makePattern(current[k].original || '') === pattern);
+        if (actualKeys.length !== members.length || actualKeys.some(k => !expected.has(k))) return;
+        for (const member of members) {
+          if (!current[member.key] || versionToken(current[member.key]) !== expected.get(member.key)) return;
+        }
+        for (const member of members) current[member.key] = patch(current[member.key]);
+        return current;
+      }, undefined, false);
+      if (!result.committed) alert('Фраза или группа изменилась у другого пользователя. Проверьте актуальный текст и повторите сохранение.');
+    } catch (err) { alert('Ошибка сохранения: ' + err.message); }
   }
 
   // ========== ПОДТВЕРЖДЕНИЕ ПЕРЕВОДА ==========
-  function handleConfirmToggle(e) {
-    const btn = e.currentTarget;
-    const key = btn.dataset.key;
+  async function handleConfirmToggle(e) {
+    const key = e.currentTarget.dataset.key;
     const item = allData.find(d => d.key === key);
-    if (!item) return;
-    if (item.translation === '') {
-      alert('Невозможно подтвердить: перевод отсутствует.');
-      return;
-    }
     const user = getCurrentUserInfo();
-    if (user.role !== 'editor') {
-      alert('Только редакторы могут подтверждать переводы.');
-      return;
+    if (!user.uid || user.role !== 'editor') { alert('Только редакторы могут подтверждать переводы.'); return; }
+    if (!item || !item.translation) { alert('Невозможно подтвердить: перевод отсутствует.'); return; }
+    const input = e.currentTarget.closest('.entry').querySelector('.translation-input');
+    if (stripLineBreaks(input.value) !== item.translation) {
+      alert('Сначала сохраните изменённый перевод, затем подтвердите его.'); return;
     }
+    const expected = versionToken(item);
     const newConfirmed = !item.confirmed;
-    const updateData = {
-      confirmed: newConfirmed,
-      confirmedBy: newConfirmed ? user.uid : null,
-      confirmedByName: newConfirmed ? user.displayName : null
-    };
-
-    if (newConfirmed) {
-      // Сохраняем текущий перевод как последний подтверждённый
-      updateData.lastConfirmedTranslation = item.translation;
-      updateData.lastConfirmedTranslationAuthor = item.translationAuthor || '';
-      updateData.lastConfirmedTranslationAuthorName = item.translationAuthorName || '';
-      updateData.lastConfirmedBy = user.uid;
-      updateData.lastConfirmedByName = user.displayName;
-      updateData.lastConfirmedAt = Date.now();
-    }
-    // При снятии подтверждения lastConfirmed* остаются нетронутыми
-
-    stringsRef.child(key).update(updateData)
-      .then(() => {
-        item.confirmed = newConfirmed;
-        item.confirmedBy = newConfirmed ? user.uid : null;
-        item.confirmedByName = newConfirmed ? user.displayName : null;
+    try {
+      const result = await stringsRef.child(key).transaction(current => {
+        if (!current || versionToken(current) !== expected) return;
+        preserveConfirmed(current);
+        current.confirmed = newConfirmed;
+        current.confirmedBy = newConfirmed ? user.uid : '';
+        current.confirmedByName = newConfirmed ? user.displayName : '';
         if (newConfirmed) {
-          item.lastConfirmedTranslation = item.translation;
-          item.lastConfirmedTranslationAuthor = item.translationAuthor || '';
-          item.lastConfirmedTranslationAuthorName = item.translationAuthorName || '';
-          item.lastConfirmedBy = user.uid;
-          item.lastConfirmedByName = user.displayName;
-          item.lastConfirmedAt = Date.now();
+          preserveConfirmed(current);
+          current.lastConfirmedAt = firebase.database.ServerValue.TIMESTAMP;
         }
-        render();
-      })
-      .catch(err => alert('Ошибка обновления подтверждения: ' + err.message));
+        return current;
+      }, undefined, false);
+      if (!result.committed) alert('Перевод изменился. Проверьте актуальную версию перед подтверждением.');
+    } catch (err) { alert('Ошибка обновления подтверждения: ' + err.message); }
   }
 
   // ========== ПОСЛЕДНИЙ ПОДТВЕРЖДЁННЫЙ ПЕРЕВОД ==========
+  let lastConfirmedSelection = null;
   function showLastConfirmedModal(key) {
-    const item = allData.find(d => d.key === key);
+    const rawItem = allData.find(d => d.key === key);
+    const item = confirmedVersion(rawItem);
+    lastConfirmedSelection = rawItem ? { key, token: versionToken(rawItem) } : null;
     if (!item || !item.lastConfirmedTranslation) {
       alert('Для этой фразы ещё нет сохранённого последнего подтверждённого перевода.');
       return;
@@ -1033,9 +1057,7 @@
     let html = `
       <div class="modal-item">
         <div style="font-size: 12px; color: #666; margin-bottom: 4px;">📝 Текущий перевод:</div>
-        <div class="last-confirmed-block ${isSame ? 'confirmed-now' : ''}">
-          ${escapeHtml(currentTranslation || '(пусто)')}
-        </div>
+        <div class="last-confirmed-block ${isSame ? 'confirmed-now' : ''}">${escapeHtml(currentTranslation || '(пусто)')}</div>
         ${item.confirmed ? '<div class="last-confirmed-meta" style="color:#2e7d32;">✅ Подтверждён</div>' : ''}
       </div>
       <div class="modal-item">
@@ -1045,48 +1067,55 @@
         ${lastAuthorName ? `<div class="last-confirmed-meta">✍️ Автор перевода: ${escapeHtml(lastAuthorName)}</div>` : ''}
       </div>
       <div style="margin-top: 16px; text-align: center;">
-        ${needsRestore
+        ${needsRestore && getCurrentUserInfo().uid && getCurrentUserInfo().role === 'editor'
           ? `<button class="restore-last-confirmed-btn" data-key="${escapeHtml(key)}">↩️ Восстановить и подтвердить</button>`
-          : `<div style="color: #2e7d32; font-size: 13px;">Текущий перевод уже совпадает с последним подтверждённым.</div>`}
+          : `<div style="font-size: 13px;">${needsRestore ? 'Восстановить и подтвердить перевод может редактор.' : 'Текущий перевод уже совпадает с последним подтверждённым.'}</div>`}
       </div>
     `;
     lastConfirmedContent.innerHTML = html;
     lastConfirmedModal.classList.add('active');
   }
 
-  function restoreLastConfirmed(key) {
-    const item = allData.find(d => d.key === key);
-    if (!item || !item.lastConfirmedTranslation) return;
-    const confirmedBy = item.lastConfirmedByName || 'Аноним';
-    if (!confirm(
-      `Восстановить последний подтверждённый перевод?\n\n` +
-      `Текущий: "${item.translation || '(пусто)'}"\n` +
-      `Будет заменён на: "${item.lastConfirmedTranslation}"\n\n` +
-      `Статус: ✅ подтверждён (${confirmedBy})`
-    )) return;
-
-    const updates = {
-      translation: item.lastConfirmedTranslation,
-      translationAuthor: item.lastConfirmedTranslationAuthor || '',
-      translationAuthorName: item.lastConfirmedTranslationAuthorName || '',
-      confirmed: true,
-      confirmedBy: item.lastConfirmedBy || '',
-      confirmedByName: item.lastConfirmedByName || ''
-      // lastConfirmed* не трогаем — они и так указывают на это значение
-    };
-
-    stringsRef.child(key).update(updates)
-      .then(() => {
-        item.translation = item.lastConfirmedTranslation;
-        item.translationAuthor = item.lastConfirmedTranslationAuthor || '';
-        item.translationAuthorName = item.lastConfirmedTranslationAuthorName || '';
-        item.confirmed = true;
-        item.confirmedBy = item.lastConfirmedBy || '';
-        item.confirmedByName = item.lastConfirmedByName || '';
-        lastConfirmedModal.classList.remove('active');
-        render();
-      })
-      .catch(err => alert('Ошибка восстановления: ' + err.message));
+  async function restoreLastConfirmed(key) {
+    const user = getCurrentUserInfo();
+    if (!user.uid || user.role !== 'editor') { alert('Восстановить подтверждённый перевод может только редактор.'); return; }
+    const selection = lastConfirmedSelection;
+    const rawItem = allData.find(d => d.key === key);
+    if (!selection || selection.key !== key || !rawItem || versionToken(rawItem) !== selection.token) {
+      alert('Данные изменились. Откройте последнюю подтверждённую версию ещё раз.'); return;
+    }
+    const item = confirmedVersion(rawItem);
+    if (!item) return;
+    if (!confirm('Заменить текущий перевод последней подтверждённой версией? Откат затронет только фразу #' + key + '. Несохранённый текст этой фразы будет заменён.')) return;
+    try {
+      const result = await stringsRef.child(key).transaction(current => {
+        if (!current || versionToken(current) !== selection.token) return;
+        const saved = confirmedVersion(current);
+        if (!saved) return;
+        return Object.assign(current, {
+          translation: saved.lastConfirmedTranslation,
+          translationAuthor: saved.lastConfirmedTranslationAuthor || '',
+          translationAuthorName: saved.lastConfirmedTranslationAuthorName || '',
+          confirmed: true,
+          confirmedBy: saved.lastConfirmedBy || '',
+          confirmedByName: saved.lastConfirmedByName || '',
+          lastConfirmedTranslation: saved.lastConfirmedTranslation,
+          lastConfirmedTranslationAuthor: saved.lastConfirmedTranslationAuthor || '',
+          lastConfirmedTranslationAuthorName: saved.lastConfirmedTranslationAuthorName || '',
+          lastConfirmedBy: saved.lastConfirmedBy || '',
+          lastConfirmedByName: saved.lastConfirmedByName || '',
+          lastConfirmedAt: saved.lastConfirmedAt || 0
+        });
+      }, undefined, false);
+      if (!result.committed) {
+        alert('Данные изменились. Откройте последнюю подтверждённую версию ещё раз.'); return;
+      }
+      translationDrafts.delete(key);
+      const input = Array.from(container.querySelectorAll('.translation-input')).find(el => el.dataset.key === key);
+      if (input) { input.value = item.lastConfirmedTranslation; input._savedValue = input.value; }
+      lastConfirmedModal.classList.remove('active');
+      render();
+    } catch (err) { alert('Ошибка восстановления: ' + err.message); }
   }
 
   lastConfirmedClose.addEventListener('click', () => lastConfirmedModal.classList.remove('active'));
@@ -1106,7 +1135,8 @@
       return;
     }
 
-    const item = allData.find(d => d.key === key);
+    const sourceItem = allData.find(d => d.key === key);
+    const item = confirmedVersion(sourceItem) || sourceItem;
     if (!item) return;
 
     const newContent = stripLineBreaks(newOriginal);
@@ -1202,6 +1232,10 @@
       updates[`strings/${key}/originalEditedAt`] = Date.now();
 
       if (oldNorm !== newNorm && item.translation) {
+        const saved = confirmedVersion(item);
+        if (saved) for (const [field, value] of Object.entries(saved)) {
+          if (field.startsWith('lastConfirmed')) updates[`strings/${key}/${field}`] = value;
+        }
         updates[`strings/${key}/confirmed`] = false;
         updates[`strings/${key}/confirmedBy`] = '';
         updates[`strings/${key}/confirmedByName`] = '';
@@ -1364,7 +1398,24 @@
   });
 
   // ========== РЕНДЕРИНГ ==========
+  const translationDrafts = new Map();
   function render() {
+    for (const input of container.querySelectorAll('.translation-input')) {
+      if (input._savedValue !== undefined && input.value !== input._savedValue)
+        translationDrafts.set(input.dataset.key, input.value);
+    }
+    renderContent();
+    for (const input of container.querySelectorAll('.translation-input')) {
+      input._savedValue = input.value;
+      const key = input.dataset.key;
+      if (translationDrafts.has(key)) {
+        if (stripLineBreaks(translationDrafts.get(key)) === input.value) translationDrafts.delete(key);
+        else { input.value = translationDrafts.get(key); autoResize(input); }
+      }
+    }
+  }
+
+  function renderContent() {
     try {
       const displayItems = getDisplayItems();
       const totalDisplay = displayItems.length;
@@ -1412,7 +1463,7 @@
         const confirmedByName = item.confirmedByName || '';
         const inactive = item.inactive || false;
         const lastConfirmedTranslation = item.lastConfirmedTranslation || '';
-        const safeKey = key.replace(/"/g, '&quot;');
+        const safeKey = escapeHtml(key);
 
         let groupInfo = '';
         if (groupMode.checked && item._groupMembers && item._groupMembers.length > 1) {
@@ -1449,9 +1500,9 @@
         const similarButton = `<button class="similar-btn" data-key="${safeKey}">🔍 Похожие</button>`;
 
         let lastConfirmedButton = '';
-        if (lastConfirmedTranslation) {
+        if (confirmedVersion(item)) {
           const tooltip = `Последняя подтверждённая версия${item.lastConfirmedByName ? ' (' + item.lastConfirmedByName + ')' : ''}`;
-          lastConfirmedButton = `<button class="last-confirmed-btn" data-key="${safeKey}" title="${escapeHtml(tooltip)}">📜</button>`;
+          lastConfirmedButton = `<button class="last-confirmed-btn" data-key="${safeKey}" title="${escapeHtml(tooltip)}">📜 Последняя подтверждённая</button>`;
         }
 
         let duplicateInfo = '';
@@ -1599,7 +1650,7 @@
       });
     } catch (err) {
       console.error('Ошибка при рендеринге:', err);
-      container.innerHTML = `<div class="loader" style="color:#c62828;">Ошибка отображения: ${err.message}</div>`;
+      container.innerHTML = `<div class="loader" style="color:#c62828;">Ошибка отображения: ${escapeHtml(err.message)}</div>`;
     }
   }
 
@@ -1653,6 +1704,7 @@
     if (commentText === '') { alert('Комментарий не может быть пустым.'); return; }
 
     const user = getCurrentUserInfo();
+    if (!user.uid) { alert('Для отправки комментария войдите в аккаунт.'); return; }
     const newComment = {
       author: user.uid,
       authorName: user.displayName,
@@ -1661,15 +1713,15 @@
     };
     const item = allData.find(d => d.key === key);
     if (!item) return;
-    let comments = item.userComments || [];
-    comments.push(newComment);
-    if (comments.length > 50) comments = comments.slice(-50);
-    stringsRef.child(key).update({ userComments: comments })
-      .then(() => {
-        const localItem = allData.find(d => d.key === key);
-        if (localItem) localItem.userComments = comments;
+    stringsRef.child(key).transaction(current => {
+      if (!current) return;
+      const comments = Array.isArray(current.userComments) ? current.userComments : [];
+      current.userComments = [...comments, newComment].slice(-50);
+      return current;
+    }, undefined, false)
+      .then(result => {
+        if (!result.committed) { alert('Фраза удалена. Комментарий не сохранён.'); return; }
         input.value = '';
-        render();
       })
       .catch(err => alert('Ошибка сохранения комментария: ' + err.message));
   }
@@ -1734,6 +1786,7 @@
 
   // ========== ИМПОРТ ОРИГИНАЛОВ ==========
   function importWTS(file) {
+    if (!currentUser || currentUserRole !== 'editor') { alert('Импорт доступен только редактору.'); return; }
     const reader = new FileReader();
     reader.onload = function(e) {
       try {
@@ -1801,7 +1854,7 @@
 
         for (const p of parsedByContent.values()) {
           const c = norm(p.content);
-          const existing = existingByContent.get(c);
+          const existing = confirmedVersion(existingByContent.get(c)) || existingByContent.get(c);
           const targetKey = String(p.number);
           const inactiveFinal = inactiveByContent.has(c);
 
@@ -1915,6 +1968,7 @@
 
   // ========== ИМПОРТ ПЕРЕВОДОВ ==========
   function importTranslationsFromWTS(file) {
+    if (!currentUser || currentUserRole !== 'editor') { alert('Импорт доступен только редактору.'); return; }
     const reader = new FileReader();
     reader.onload = function(e) {
       try {
@@ -1965,7 +2019,9 @@
           const normOrig = normalizeOriginalForCompare(origContent);
           const dbKey = dbByContent.get(normOrig);
           if (!dbKey) { notFound.push(id); continue; }
+          const previous = confirmedVersion(allData.find(d => d.key === dbKey));
           const updateData = {
+            ...(previous ? Object.fromEntries(Object.entries(previous).filter(([k]) => k.startsWith('lastConfirmed'))) : {}),
             translation: transContent,
             translationAuthor: user.uid,
             translationAuthorName: user.displayName
@@ -2235,8 +2291,9 @@
   // ========== МЕТАДАННЫЕ ==========
   metadataRef.on('value', (snapshot) => {
     const data = snapshot.val();
-    if (data && data.importedNumbers) {
-      importedNumbers = data.importedNumbers;
+    {
+      importedNumbers = (data && data.importedNumbers) || [];
+      if (!data) { lastImportStructure = []; emptyStringIds = []; duplicateGroups = new Map(); render(); return; }
       lastImportStructure = Array.isArray(data.lastImportStructure) ? data.lastImportStructure : [];
       emptyStringIds = Array.isArray(data.emptyStringIds) ? data.emptyStringIds : [];
       duplicateGroups = computeDuplicateGroups(lastImportStructure);
@@ -2246,8 +2303,9 @@
 
   metadataRef.once('value', (snapshot) => {
     const data = snapshot.val();
-    if (data && data.importedNumbers) {
-      importedNumbers = data.importedNumbers;
+    {
+      importedNumbers = (data && data.importedNumbers) || [];
+      if (!data) { lastImportStructure = []; emptyStringIds = []; duplicateGroups = new Map(); render(); return; }
       lastImportStructure = Array.isArray(data.lastImportStructure) ? data.lastImportStructure : [];
       emptyStringIds = Array.isArray(data.emptyStringIds) ? data.emptyStringIds : [];
       duplicateGroups = computeDuplicateGroups(lastImportStructure);
