@@ -93,8 +93,6 @@
       font-weight: 500;
     }
     .toolbar button:hover { background: #1565c0; }
-    .toolbar .format-filter-btn { background: #607d8b; }
-    .toolbar .format-filter-btn[aria-pressed="true"] { background: #e65100; }
     .toolbar .export-btn { background: #2e7d32; }
     .toolbar .export-btn:hover { background: #388e3c; }
     .toolbar .export-originals-btn { background: #455a64; }
@@ -451,10 +449,6 @@
     <button class="db-restore-btn" id="dbRestoreBtn" style="display:none;">📤 Восстановить БД</button>
     <input type="file" id="dbRestoreInput" accept=".json" style="display:none;">
 
-    <button type="button" id="filterFormatting" class="format-filter-btn" aria-pressed="false" title="Только фразы с переводом, в которых отличаются числа, содержимое &lt;…&gt; или управляющие коды (цвет, сброс цвета и другие; переносы не учитываются). Учитываются порядок и количество.">Различия форматирования</button>
-
-    <button type="button" id="autoFormatBtn">Исправить форматирование…</button>
-    <button type="button" id="undoFormatBtn" disabled>Отменить автоисправление</button>
     <div class="filter-group">
       <label title="Скрыть фразы без русских букв, с EditorSuffix и не из последнего импорта"><input type="checkbox" id="filterHideUnnecessary"> Скрыть ненужные фразы</label>
       <label><input type="checkbox" id="filterNoTranslation"> Без перевода</label>
@@ -554,7 +548,6 @@
   const filterUnconfirmed = document.getElementById('filterUnconfirmed');
   const filterInactive = document.getElementById('filterInactive');
   const groupMode = document.getElementById('groupMode');
-  const filterFormatting = document.getElementById('filterFormatting');
   const perPageSelect = document.getElementById('perPage');
   const prevPageBtn = document.getElementById('prevPage');
   const nextPageBtn = document.getElementById('nextPage');
@@ -646,24 +639,6 @@
     cleaned = cleaned.replace(/\d+(?:\.\d+)?/g, '#');
     cleaned = cleaned.replace(/<[^>]+>/g, '<TAG>');
     return cleaned;
-  }
-
-  // Extract protected tokens separately from the translated prose. Consume complete
-  // tags/colors/textures first so their digits are not counted twice.
-  function formattingSignature(text) {
-    const tokens = String(text ?? '').match(/<[^>]+>|\|[cCсС][0-9a-fA-F]{8}|\|[cCсС][0-9a-fA-F]{6}|\|[tT][\s\S]*?\|[tT]|\|[aA][\s\S]*?\|[aA]|\|\||\|[a-zA-ZсС]|\d+(?:\.\d+)?/g) || [];
-    return JSON.stringify(tokens.filter(token => !/^\|n$/i.test(token)).map(token => {
-      if (/^\|[cCсС][0-9a-fA-F]{6,8}$/.test(token)) {
-        return '|c' + token.slice(2).toLowerCase();
-      }
-      if (/^\|[a-zA-ZсС]$/.test(token)) return token.toLowerCase();
-      return token;
-    }));
-  }
-
-  function hasFormattingDifference(item) {
-    return String(item.translation ?? '').trim() !== '' &&
-      formattingSignature(item.original) !== formattingSignature(item.translation);
   }
 
   function extractNumbers(str) {
@@ -932,10 +907,6 @@
       });
     }
 
-    if (filterFormatting.getAttribute('aria-pressed') === 'true') {
-      filtered = filtered.filter(hasFormattingDifference);
-    }
-
     return filtered;
   }
 
@@ -1032,102 +1003,6 @@
       if (!result.committed) alert('Фраза или группа изменилась у другого пользователя. Проверьте актуальный текст и повторите сохранение.');
     } catch (err) { alert('Ошибка сохранения: ' + err.message); }
   }
-
-  // Only substitute existing protected slots. Never guess where missing tags belong.
-  function formatTokens(text) {
-    const regex = /<[^>]+>|\|[cCсС][0-9a-fA-F]{8}|\|[cCсС][0-9a-fA-F]{6}|\|[tT][\s\S]*?\|[tT]|\|[aA][\s\S]*?\|[aA]|\|\||\|[a-zA-ZсС]|\d+(?:\.\d+)?/g;
-    return Array.from(String(text ?? '').matchAll(regex)).filter(m => !/^\|n$/i.test(m[0]));
-  }
-
-  function autoFormatTranslation(item) {
-    const source = formatTokens(item.original), target = formatTokens(item.translation);
-    const kind = token => /^\d/.test(token) ? 'number' : token[0] === '<' ? 'tag'
-      : /^\|[cCсС][0-9a-f]/.test(token) ? 'color' : token.slice(0, 2).toLowerCase();
-    if (source.length !== target.length || source.some((m, i) => kind(m[0]) !== kind(target[i][0]))) return null;
-    let result = item.translation;
-    for (let i = target.length - 1; i >= 0; i--) {
-      result = result.slice(0, target[i].index) + source[i][0] + result.slice(target[i].index + target[i][0].length);
-    }
-    // Replacing a protected token must never change actual line breaks.
-    if (JSON.stringify(result.match(/\r\n|\r|\n/g)) !== JSON.stringify(item.translation.match(/\r\n|\r|\n/g))) return null;
-    return hasFormattingDifference({ original: item.original, translation: result }) ? null : result;
-  }
-
-  const autoFormatBtn = document.getElementById('autoFormatBtn');
-  const undoFormatBtn = document.getElementById('undoFormatBtn');
-  let formatUndo = null;
-  const formatFields = ['translation', 'translationAuthor', 'translationAuthorName', 'confirmed',
-    'confirmedBy', 'confirmedByName', 'lastConfirmedTranslation', 'lastConfirmedTranslationAuthor',
-    'lastConfirmedTranslationAuthorName', 'lastConfirmedBy', 'lastConfirmedByName', 'lastConfirmedAt'];
-  const formatModal = document.createElement('div');
-  formatModal.className = 'modal-overlay';
-  document.body.appendChild(formatModal);
-
-  autoFormatBtn.addEventListener('click', () => {
-    if (filterFormatting.getAttribute('aria-pressed') !== 'true') {
-      alert('Сначала включите фильтр «Различия форматирования».'); return;
-    }
-    if (!getCurrentUserInfo().uid) { alert('Для сохранения войдите в аккаунт.'); return; }
-    const candidates = getFilteredData().filter(hasFormattingDifference);
-    const plan = candidates.map(item => ({ key: item.key, before: {...item}, after: autoFormatTranslation(item) }))
-      .filter(p => p.after !== null && p.after !== p.before.translation);
-    formatModal.innerHTML = `<div class="modal-box"><h3>Автоисправление: предварительный просмотр</h3>
-      <p>Под фильтром: ${candidates.length}. Можно исправить: ${plan.length}. Требуют ручной проверки: ${candidates.length - plan.length}.</p>
-      <p>Все страницы фильтра; каждая фраза отдельно, без распространения на группу. Подтверждение исправленных переводов будет снято. Переносы строк и пунктуация вне чисел и тегов сохраняются.</p>
-      ${plan.map(p => `<div class="modal-item"><b>#${escapeHtml(String(p.key))}</b>
-      <div class="modal-original">Оригинал: ${escapeHtml(p.before.original)}</div>
-      <div class="modal-translation">До: ${escapeHtml(p.before.translation)}</div>
-      <div class="modal-translation">После: ${escapeHtml(p.after)}</div></div>`).join('')}
-      <button type="button" id="applyFormatPlan" ${plan.length ? '' : 'disabled'}>Применить ${plan.length} исправлений</button>
-      <button type="button" id="closeFormatPlan">Закрыть</button><p id="formatPlanStatus" role="status"></p></div>`;
-    formatModal.classList.add('active');
-    document.getElementById('closeFormatPlan').onclick = () => formatModal.classList.remove('active');
-    document.getElementById('applyFormatPlan').onclick = async function() {
-      const user = getCurrentUserInfo();
-      if (!user.uid) { alert('Войдите в аккаунт.'); return; }
-      this.disabled = true;
-      document.getElementById('closeFormatPlan').disabled = true;
-      try {
-        const result = await stringsRef.transaction(current => {
-          if (!current || plan.some(p => !current[p.key] || versionToken(current[p.key]) !== versionToken(p.before))) return;
-          for (const p of plan) {
-            const entry = current[p.key];
-            preserveConfirmed(entry);
-            Object.assign(entry, { translation: p.after, translationAuthor: user.uid,
-              translationAuthorName: user.displayName || '', confirmed: false, confirmedBy: '', confirmedByName: '' });
-          }
-          return current;
-        }, undefined, false);
-        if (!result.committed) throw new Error('Данные изменились. Закройте окно и создайте новый просмотр; ничего не сохранено.');
-        const saved = result.snapshot.val();
-        formatUndo = plan.map(p => ({ key: p.key, before: p.before, expected: versionToken(saved[p.key]) }));
-        undoFormatBtn.disabled = false;
-        document.getElementById('formatPlanStatus').textContent = `Сохранено: ${plan.length}. Проверьте результат. Доступна отмена последнего применения до закрытия страницы.`;
-      } catch (err) {
-        document.getElementById('formatPlanStatus').textContent = 'Ошибка: ' + err.message;
-        this.disabled = false;
-      } finally { document.getElementById('closeFormatPlan').disabled = false; }
-    };
-  });
-
-  undoFormatBtn.addEventListener('click', async () => {
-    if (!formatUndo || !getCurrentUserInfo().uid) return;
-    undoFormatBtn.disabled = true;
-    const undo = formatUndo;
-    try {
-      const result = await stringsRef.transaction(current => {
-        if (!current || undo.some(p => !current[p.key] || versionToken(current[p.key]) !== p.expected)) return;
-        for (const p of undo) for (const field of formatFields) {
-          if (p.before[field] === undefined) delete current[p.key][field];
-          else current[p.key][field] = p.before[field];
-        }
-        return current;
-      }, undefined, false);
-      if (!result.committed) throw new Error('После автоисправления фразы изменились. Отмена не выполнена, чтобы сохранить новые правки.');
-      formatUndo = null;
-      alert('Последнее автоисправление отменено.');
-    } catch (err) { alert(err.message); undoFormatBtn.disabled = false; }
-  });
 
   // ========== ПОДТВЕРЖДЕНИЕ ПЕРЕВОДА ==========
   async function handleConfirmToggle(e) {
@@ -2405,13 +2280,6 @@
 
   gotoPageBtn.addEventListener('click', handleGoto);
   pageInput.addEventListener('keypress', function(e) { if (e.key === 'Enter') handleGoto(); });
-
-  filterFormatting.addEventListener('click', () => {
-    const active = filterFormatting.getAttribute('aria-pressed') !== 'true';
-    filterFormatting.setAttribute('aria-pressed', String(active));
-    currentPage = 0;
-    render();
-  });
 
   searchInput.addEventListener('input', () => { currentPage = 0; render(); });
 
