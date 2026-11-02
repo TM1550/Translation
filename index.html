@@ -93,6 +93,8 @@
       font-weight: 500;
     }
     .toolbar button:hover { background: #1565c0; }
+    .toolbar .format-filter-btn { background: #607d8b; }
+    .toolbar .format-filter-btn[aria-pressed="true"] { background: #e65100; }
     .toolbar .export-btn { background: #2e7d32; }
     .toolbar .export-btn:hover { background: #388e3c; }
     .toolbar .export-originals-btn { background: #455a64; }
@@ -449,6 +451,8 @@
     <button class="db-restore-btn" id="dbRestoreBtn" style="display:none;">📤 Восстановить БД</button>
     <input type="file" id="dbRestoreInput" accept=".json" style="display:none;">
 
+    <button type="button" id="filterFormatting" class="format-filter-btn" aria-pressed="false" title="Только фразы с переводом, в которых отличаются числа, содержимое &lt;…&gt; или управляющие коды (цвет, сброс цвета, переносы и другие). Учитываются порядок и количество.">Различия форматирования</button>
+
     <div class="filter-group">
       <label title="Скрыть фразы без русских букв, с EditorSuffix и не из последнего импорта"><input type="checkbox" id="filterHideUnnecessary"> Скрыть ненужные фразы</label>
       <label><input type="checkbox" id="filterNoTranslation"> Без перевода</label>
@@ -548,6 +552,7 @@
   const filterUnconfirmed = document.getElementById('filterUnconfirmed');
   const filterInactive = document.getElementById('filterInactive');
   const groupMode = document.getElementById('groupMode');
+  const filterFormatting = document.getElementById('filterFormatting');
   const perPageSelect = document.getElementById('perPage');
   const prevPageBtn = document.getElementById('prevPage');
   const nextPageBtn = document.getElementById('nextPage');
@@ -639,6 +644,24 @@
     cleaned = cleaned.replace(/\d+(?:\.\d+)?/g, '#');
     cleaned = cleaned.replace(/<[^>]+>/g, '<TAG>');
     return cleaned;
+  }
+
+  // Extract protected tokens separately from the translated prose. Consume complete
+  // tags/colors/textures first so their digits are not counted twice.
+  function formattingSignature(text) {
+    const tokens = String(text ?? '').match(/<[^>]+>|\|[cCсС][0-9a-fA-F]{8}|\|[cCсС][0-9a-fA-F]{6}|\|[tT][\s\S]*?\|[tT]|\|[aA][\s\S]*?\|[aA]|\|\||\|[a-zA-ZсС]|\d+(?:\.\d+)?/g) || [];
+    return JSON.stringify(tokens.map(token => {
+      if (/^\|[cCсС][0-9a-fA-F]{6,8}$/.test(token)) {
+        return '|c' + token.slice(2).toLowerCase();
+      }
+      if (/^\|[a-zA-ZсС]$/.test(token)) return token.toLowerCase();
+      return token;
+    }));
+  }
+
+  function hasFormattingDifference(item) {
+    return String(item.translation ?? '').trim() !== '' &&
+      formattingSignature(item.original) !== formattingSignature(item.translation);
   }
 
   function extractNumbers(str) {
@@ -905,6 +928,10 @@
         const hasTranslation = item.translation !== '';
         return hasTranslation && !item.confirmed;
       });
+    }
+
+    if (filterFormatting.getAttribute('aria-pressed') === 'true') {
+      filtered = filtered.filter(hasFormattingDifference);
     }
 
     return filtered;
@@ -2280,6 +2307,13 @@
 
   gotoPageBtn.addEventListener('click', handleGoto);
   pageInput.addEventListener('keypress', function(e) { if (e.key === 'Enter') handleGoto(); });
+
+  filterFormatting.addEventListener('click', () => {
+    const active = filterFormatting.getAttribute('aria-pressed') !== 'true';
+    filterFormatting.setAttribute('aria-pressed', String(active));
+    currentPage = 0;
+    render();
+  });
 
   searchInput.addEventListener('input', () => { currentPage = 0; render(); });
 
