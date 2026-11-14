@@ -10,8 +10,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
 
 function createSite(initial = { strings: {}, metadata: {} }) {
   let data = clone(initial);
-  let beforeTransaction;
-  let retryTransaction;
+  let beforeUpdate;
+  let nextComment = 0;
   const listeners = new Map();
   const elements = new Map();
   const alerts = [];
@@ -35,6 +35,8 @@ function createSite(initial = { strings: {}, metadata: {} }) {
   function ref(location = '') {
     return {
       child: child => ref([location, child].filter(Boolean).join('/')),
+      push: () => ({ key: `comment-${++nextComment}` }),
+      off() { listeners.delete(location); },
       on(event, callback) {
         if (!listeners.has(location)) listeners.set(location, []);
         listeners.get(location).push(callback);
@@ -46,26 +48,26 @@ function createSite(initial = { strings: {}, metadata: {} }) {
           return value;
         });
       },
-      async transaction(update) {
-        if (beforeTransaction) { const action = beforeTransaction; beforeTransaction = undefined; action(data); }
-        let updated = update(clone(get(location)));
-        if (retryTransaction) {
-          const action = retryTransaction;
-          retryTransaction = undefined;
+      async update(updates) {
+        if (beforeUpdate) {
+          const action = beforeUpdate;
+          beforeUpdate = undefined;
           action(data);
-          updated = update(clone(get(location)));
+          data.metadata.revision = (data.metadata.revision || 0) + 1;
         }
-        if (updated === undefined) return { committed: false };
-        if (location === '') data = updated;
-        else {
-          const parts = location.split('/');
+        if (location === '' && updates['metadata/revision'] !== (data.metadata.revision || 0) + 1) {
+          throw Object.assign(new Error('Version conflict'), { code: 'PERMISSION_DENIED' });
+        }
+        for (const [field, value] of Object.entries(updates)) {
+          const parts = [location, field].filter(Boolean).join('/').split('/');
           const key = parts.pop();
-          const parent = parts.reduce((value, part) => value[part], data);
-          parent[key] = updated;
+          let parent = data;
+          for (const part of parts) parent = parent[part] || (parent[part] = {});
+          if (value === null) delete parent[key];
+          else parent[key] = clone(value);
         }
         writes.push(location);
         emit();
-        return { committed: true, snapshot: snapshot(updated) };
       }
     };
   }
@@ -86,8 +88,7 @@ function createSite(initial = { strings: {}, metadata: {} }) {
     run: source => vm.runInContext(source, context),
     data: () => data, alerts, writes, element,
     replace(next) { data = clone(next); emit(); },
-    beforeWrite(action) { beforeTransaction = action; },
-    retryWrite(action) { retryTransaction = action; }
+    beforeWrite(action) { beforeUpdate = action; }
   };
 }
 
@@ -240,15 +241,15 @@ test('translation import uses current data and preserves the previous confirmed 
   assert(site.alerts[0].includes('Обновлено'));
 });
 
-test('import aborts on a concurrent edit during a transaction retry', async () => {
+test('import aborts on a concurrent edit before the atomic update', async () => {
   const site = createSite({ strings: { 1: entry('Оригинал', 'Old') }, metadata: {} });
   editor(site);
-  site.retryWrite(data => { data.strings[1].translation = 'Concurrent'; });
+  site.beforeWrite(data => { data.strings[1].translation = 'Concurrent'; });
   site.run(`importTranslationsFromWTS({text: ${JSON.stringify(wts(1, 'New'))}})`);
   await flush();
   assert.equal(site.data().strings[1].translation, 'Concurrent');
   assert.equal(site.writes.length, 0);
-  assert(site.alerts[0].includes('Данные изменились'));
+  assert(site.alerts[0].includes('Запись отклонена'));
 });
 
 test('original editing aborts when a comment is added concurrently', async () => {

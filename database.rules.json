@@ -1,0 +1,130 @@
+{
+  "rules": {
+    ".read": "auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true",
+    ".write": "auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true",
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "displayName": {
+          ".write": "auth != null && auth.uid === $uid && newData.exists()",
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || (newData.isString() && newData.val().length > 0 && newData.val().length <= 1000)"
+        },
+        "role": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) && (newData.val() === 'editor' || newData.val() === 'translator')"
+        },
+        "canManageDb": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) && newData.isBoolean()"
+        }
+      }
+    },
+    "strings": {
+      ".read": "auth != null",
+      "$key": {
+        ".write": "(auth != null && root.child('users').child(auth.uid).child('role').val() === 'editor') && (newData.parent().parent().child('metadata/revision').val() === (root.child('metadata/revision').exists() ? root.child('metadata/revision').val() : 0) + 1)",
+        ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || (newData.hasChildren(['original', 'translation']) && (newData.parent().parent().child('metadata/revision').val() === (root.child('metadata/revision').exists() ? root.child('metadata/revision').val() : 0) + 1) && ((auth != null && root.child('users').child(auth.uid).child('role').val() === 'editor') || (data.exists() && (newData.child('translation').val() === data.child('translation').val() || (newData.child('confirmed').val() !== true && (!newData.child('confirmedBy').exists() || newData.child('confirmedBy').val() === '') && (!newData.child('confirmedByName').exists() || newData.child('confirmedByName').val() === '') && newData.child('translationAuthor').val() === (newData.child('translation').val() === '' ? '' : auth.uid) && newData.child('translationAuthorName').val() === (newData.child('translation').val() === '' ? '' : root.child('users').child(auth.uid).child('displayName').val()) && (data.child('confirmed').val() !== true || (newData.child('lastConfirmedTranslation').val() === data.child('translation').val() && newData.child('lastConfirmedTranslationAuthor').val() === (data.child('translationAuthor').exists() ? data.child('translationAuthor').val() : '') && newData.child('lastConfirmedTranslationAuthorName').val() === (data.child('translationAuthorName').exists() ? data.child('translationAuthorName').val() : '') && newData.child('lastConfirmedBy').val() === (data.child('confirmedBy').exists() ? data.child('confirmedBy').val() : '') && newData.child('lastConfirmedByName').val() === (data.child('confirmedByName').exists() ? data.child('confirmedByName').val() : '') && newData.child('lastConfirmedAt').val() === (data.child('lastConfirmedAt').exists() ? data.child('lastConfirmedAt').val() : 0))))))))",
+        "original": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()"
+        },
+        "translation": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()",
+          ".write": "auth != null && data.parent().exists() && newData.exists() && (newData.parent().child('translation').val() !== data.parent().child('translation').val())"
+        },
+        "translationAuthor": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()",
+          ".write": "auth != null && data.parent().exists() && newData.exists() && (newData.parent().child('translation').val() !== data.parent().child('translation').val())"
+        },
+        "translationAuthorName": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()",
+          ".write": "auth != null && data.parent().exists() && newData.exists() && (newData.parent().child('translation').val() !== data.parent().child('translation').val())"
+        },
+        "confirmedBy": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()",
+          ".write": "auth != null && data.parent().exists() && newData.exists() && (newData.parent().child('translation').val() !== data.parent().child('translation').val())"
+        },
+        "confirmedByName": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()",
+          ".write": "auth != null && data.parent().exists() && newData.exists() && (newData.parent().child('translation').val() !== data.parent().child('translation').val())"
+        },
+        "wtsComment": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()"
+        },
+        "comment": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()"
+        },
+        "lastConfirmedTranslation": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()",
+          ".write": "auth != null && data.parent().exists() && newData.exists() && (newData.parent().child('translation').val() !== data.parent().child('translation').val()) && data.parent().child('confirmed').val() === true"
+        },
+        "lastConfirmedTranslationAuthor": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()",
+          ".write": "auth != null && data.parent().exists() && newData.exists() && (newData.parent().child('translation').val() !== data.parent().child('translation').val()) && data.parent().child('confirmed').val() === true"
+        },
+        "lastConfirmedTranslationAuthorName": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()",
+          ".write": "auth != null && data.parent().exists() && newData.exists() && (newData.parent().child('translation').val() !== data.parent().child('translation').val()) && data.parent().child('confirmed').val() === true"
+        },
+        "lastConfirmedBy": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()",
+          ".write": "auth != null && data.parent().exists() && newData.exists() && (newData.parent().child('translation').val() !== data.parent().child('translation').val()) && data.parent().child('confirmed').val() === true"
+        },
+        "lastConfirmedByName": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()",
+          ".write": "auth != null && data.parent().exists() && newData.exists() && (newData.parent().child('translation').val() !== data.parent().child('translation').val()) && data.parent().child('confirmed').val() === true"
+        },
+        "originalEditedBy": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()"
+        },
+        "originalEditedByName": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()"
+        },
+        "confirmed": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isBoolean()",
+          ".write": "auth != null && data.parent().exists() && newData.exists() && (newData.parent().child('translation').val() !== data.parent().child('translation').val())"
+        },
+        "inactive": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isBoolean()"
+        },
+        "lastConfirmedAt": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || (newData.isNumber() && newData.val() >= 0)",
+          ".write": "auth != null && data.parent().exists() && newData.exists() && (newData.parent().child('translation').val() !== data.parent().child('translation').val()) && data.parent().child('confirmed').val() === true"
+        },
+        "originalEditedAt": {
+          ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || (newData.isNumber() && newData.val() >= 0)"
+        },
+        "userComments": {
+          "$comment": {
+            ".write": "auth != null && root.child('strings').child($key).exists() && !data.exists() && newData.exists()",
+            ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || (newData.hasChildren(['author','authorName','text','timestamp']) && ((auth != null && root.child('users').child(auth.uid).child('role').val() === 'editor') || (newData.child('author').val() === auth.uid && newData.child('authorName').val() === root.child('users').child(auth.uid).child('displayName').val())))",
+            "author": {
+              ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()"
+            },
+            "authorName": {
+              ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || newData.isString()"
+            },
+            "text": {
+              ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || (newData.isString() && newData.val().length > 0)"
+            },
+            "timestamp": {
+              ".validate": "(auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) || (newData.isNumber() && newData.val() >= 0)"
+            },
+            "$other": {
+              ".validate": "auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true"
+            }
+          }
+        },
+        "$other": {
+          ".validate": "auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true"
+        }
+      }
+    },
+    "metadata": {
+      ".read": "auth != null",
+      ".write": "(auth != null && root.child('users').child(auth.uid).child('role').val() === 'editor') && newData.exists() && newData.child('revision').val() === (root.child('metadata/revision').exists() ? root.child('metadata/revision').val() : 0) + 1",
+      "revision": {
+        ".write": "auth != null && newData.exists()",
+        ".validate": "newData.isNumber() && newData.val() === (root.child('metadata/revision').exists() ? root.child('metadata/revision').val() : 0) + 1"
+      },
+      ".validate": "newData.child('revision').val() === (root.child('metadata/revision').exists() ? root.child('metadata/revision').val() : 0) + 1 || ((auth != null && root.child('users').child(auth.uid).child('canManageDb').val() === true) && !newData.child('revision').exists())"
+    }
+  }
+}

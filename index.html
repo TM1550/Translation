@@ -594,6 +594,8 @@
   let emptyStringIds = [];
   let duplicateGroups = new Map();
   let editingOriginalKey = null;
+  let metadataRevision = 0;
+  let currentProfileRef = null;
 
   // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
   function normalizeLineEndings(str) {
@@ -753,27 +755,28 @@
   }
 
   function updateAuthUI(user) {
+    if (currentProfileRef) currentProfileRef.off('value');
+    currentProfileRef = null;
     if (user) {
       currentUser = user;
       const uid = user.uid;
-      usersRef.child(uid).once('value')
-        .then((snap) => {
-          if (!currentUser || currentUser.uid !== uid) return;
-          const data = snap.val() || {};
-          let name = data.displayName;
-          let role = data.role || 'translator';
-          let canManageDb = data.canManageDb === true;
-          if (!name) {
-            name = user.displayName || 'Аноним';
-            usersRef.child(uid).update({ displayName: name }).catch(err => console.warn(err));
-          }
-          applyUserData(name, role, canManageDb);
-        })
-        .catch(() => {
-          if (!currentUser || currentUser.uid !== uid) return;
-          const name = user.displayName || 'Аноним';
-          applyUserData(name, 'translator', false);
-        });
+      currentProfileRef = usersRef.child(uid);
+      currentProfileRef.on('value', (snap) => {
+        if (!currentUser || currentUser.uid !== uid) return;
+        const data = snap.val() || {};
+        let name = data.displayName;
+        const role = data.role || 'translator';
+        const canManageDb = data.canManageDb === true;
+        if (!name) {
+          name = user.displayName || 'Аноним';
+          usersRef.child(uid).update({ displayName: name }).catch(err => console.warn(err));
+        }
+        applyUserData(name, role, canManageDb);
+      }, () => {
+        if (!currentUser || currentUser.uid !== uid) return;
+        const name = user.displayName || 'Аноним';
+        applyUserData(name, 'translator', false);
+      });
     } else {
       currentUser = null;
       currentDisplayName = '';
@@ -969,7 +972,7 @@
   function recordToken(entry) {
     return JSON.stringify([
       versionToken({ ...entry, original: stripLineBreaks(entry.original), translation: stripLineBreaks(entry.translation) }),
-      (entry.wtsComment || entry.comment || '').trim(), entry.userComments || [], entry.inactive || false,
+      (entry.wtsComment || entry.comment || '').trim(), normalizeComments(entry.userComments), entry.inactive || false,
       entry.originalEditedBy || '', entry.originalEditedByName || '', entry.originalEditedAt || 0
     ]);
   }
@@ -981,33 +984,39 @@
   function captureDatabaseVersion() {
     return {
       records: new Map(allData.map(entry => [entry.key, recordToken(entry)])),
-      metadata: metadataToken({ importedNumbers, lastImportStructure, emptyStringIds })
+      metadata: metadataToken({ importedNumbers, lastImportStructure, emptyStringIds }), revision: metadataRevision
     };
   }
 
   async function commitDatabaseUpdates(updates, expected) {
-    // Text, comments and WTS structure must still match the preview on every retry.
-    const result = await db.ref().transaction(current => {
-      if (!current || metadataToken(current.metadata || {}) !== expected.metadata) return;
-      const records = current.strings || {};
-      if (stringEntries(records).length !== expected.records.size) return;
-      for (const [key, token] of expected.records) {
-        if (!records[key] || recordToken(records[key]) !== token) return;
+    const actual = captureDatabaseVersion();
+    if (actual.revision !== expected.revision || actual.metadata !== expected.metadata ||
+        actual.records.size !== expected.records.size ||
+        [...expected.records].some(([key, token]) => actual.records.get(key) !== token)) {
+      throw new Error('Данные изменились у другого пользователя. Проверьте актуальную версию и повторите операцию.');
+    }
+    try {
+      // Rules check this increment and every affected path together, including deletions.
+      await db.ref().update({ ...updates, 'metadata/revision': expected.revision + 1 });
+    } catch (error) {
+      if (error.code === 'PERMISSION_DENIED') {
+        throw new Error('Запись отклонена: данные или права доступа изменились. Проверьте актуальную версию и повторите операцию.');
       }
-      for (const [location, value] of Object.entries(updates)) {
-        const segments = location.split('/');
-        const field = segments.pop();
-        let parent = current;
-        for (const segment of segments) {
-          if (!parent[segment]) parent[segment] = {};
-          parent = parent[segment];
-        }
-        if (value === null) delete parent[field];
-        else parent[field] = value;
-      }
-      return current;
-    }, undefined, false);
-    if (!result.committed) throw new Error('Данные изменились у другого пользователя. Проверьте актуальную версию и повторите операцию.');
+      throw error;
+    }
+  }
+
+  function changedRecordFields(key, before, after) {
+    const updates = {};
+    for (const [field, value] of Object.entries(after)) {
+      if (value !== before[field]) updates[`strings/${key}/${field}`] = value;
+    }
+    return updates;
+  }
+
+  function normalizeComments(comments) {
+    return Object.values(comments || {}).filter(comment => comment && typeof comment === 'object')
+      .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
   }
 
   async function saveTranslation(key, newTranslation) {
@@ -1018,7 +1027,7 @@
     const pattern = makePattern(item.original);
     const members = groupMode.checked
       ? allData.filter(m => makePattern(m.original) === pattern) : [item];
-    const expected = new Map(members.map(m => [m.key, versionToken(m)]));
+    const expected = captureDatabaseVersion();
     const patch = entry => {
       const translation = stripLineBreaks(entry.original === item.original
         ? content : applyTranslationToMember(content, entry.original));
@@ -1030,24 +1039,16 @@
         confirmed: false, confirmedBy: '', confirmedByName: '' });
     };
     try {
-      // Group changes commit together, or none of them commit.
-      const ref = members.length === 1 ? stringsRef.child(key) : stringsRef;
-      const result = await ref.transaction(current => {
-        if (!current) return;
-        if (members.length === 1) {
-          if (versionToken(current) !== expected.get(key)) return;
-          return patch(current);
-        }
-        const actualKeys = Object.keys(current).filter(k => current[k] && makePattern(current[k].original || '') === pattern);
-        if (actualKeys.length !== members.length || actualKeys.some(k => !expected.has(k))) return;
-        for (const member of members) {
-          if (!current[member.key] || versionToken(current[member.key]) !== expected.get(member.key)) return;
-        }
-        for (const member of members) current[member.key] = patch(current[member.key]);
-        return current;
-      }, undefined, false);
-      if (!result.committed) alert('Фраза или группа изменилась у другого пользователя. Проверьте актуальный текст и повторите сохранение.');
-    } catch (err) { alert('Ошибка сохранения: ' + err.message); }
+      const updates = {};
+      for (const member of members) Object.assign(updates, changedRecordFields(member.key, member, patch({ ...member })));
+      if (Object.keys(updates).length > 0) await commitDatabaseUpdates(updates, expected);
+    } catch (err) {
+      const input = Array.from(container.querySelectorAll('.translation-input')).find(element => element.dataset.key === key);
+      if (input && input.value === input._savedValue) input.value = content;
+      if (!input && !translationDrafts.has(key)) translationDrafts.set(key, content);
+      render();
+      alert('Ошибка сохранения: ' + err.message);
+    }
   }
 
   // ========== ПОДТВЕРЖДЕНИЕ ПЕРЕВОДА ==========
@@ -1061,22 +1062,18 @@
     if (stripLineBreaks(input.value) !== item.translation) {
       alert('Сначала сохраните изменённый перевод, затем подтвердите его.'); return;
     }
-    const expected = versionToken(item);
+    const expected = captureDatabaseVersion();
     const newConfirmed = !item.confirmed;
     try {
-      const result = await stringsRef.child(key).transaction(current => {
-        if (!current || versionToken(current) !== expected) return;
+      const current = preserveConfirmed({ ...item });
+      current.confirmed = newConfirmed;
+      current.confirmedBy = newConfirmed ? user.uid : '';
+      current.confirmedByName = newConfirmed ? user.displayName : '';
+      if (newConfirmed) {
         preserveConfirmed(current);
-        current.confirmed = newConfirmed;
-        current.confirmedBy = newConfirmed ? user.uid : '';
-        current.confirmedByName = newConfirmed ? user.displayName : '';
-        if (newConfirmed) {
-          preserveConfirmed(current);
-          current.lastConfirmedAt = firebase.database.ServerValue.TIMESTAMP;
-        }
-        return current;
-      }, undefined, false);
-      if (!result.committed) alert('Перевод изменился. Проверьте актуальную версию перед подтверждением.');
+        current.lastConfirmedAt = firebase.database.ServerValue.TIMESTAMP;
+      }
+      await commitDatabaseUpdates(changedRecordFields(key, item, current), expected);
     } catch (err) { alert('Ошибка обновления подтверждения: ' + err.message); }
   }
 
@@ -1134,28 +1131,21 @@
     if (!item) return;
     if (!confirm('Заменить текущий перевод последней подтверждённой версией? Откат затронет только фразу #' + key + '. Несохранённый текст этой фразы будет заменён.')) return;
     try {
-      const result = await stringsRef.child(key).transaction(current => {
-        if (!current || versionToken(current) !== selection.token) return;
-        const saved = confirmedVersion(current);
-        if (!saved) return;
-        return Object.assign(current, {
-          translation: saved.lastConfirmedTranslation,
-          translationAuthor: saved.lastConfirmedTranslationAuthor || '',
-          translationAuthorName: saved.lastConfirmedTranslationAuthorName || '',
+      const current = Object.assign({}, rawItem, {
+          translation: item.lastConfirmedTranslation,
+          translationAuthor: item.lastConfirmedTranslationAuthor || '',
+          translationAuthorName: item.lastConfirmedTranslationAuthorName || '',
           confirmed: true,
-          confirmedBy: saved.lastConfirmedBy || '',
-          confirmedByName: saved.lastConfirmedByName || '',
-          lastConfirmedTranslation: saved.lastConfirmedTranslation,
-          lastConfirmedTranslationAuthor: saved.lastConfirmedTranslationAuthor || '',
-          lastConfirmedTranslationAuthorName: saved.lastConfirmedTranslationAuthorName || '',
-          lastConfirmedBy: saved.lastConfirmedBy || '',
-          lastConfirmedByName: saved.lastConfirmedByName || '',
-          lastConfirmedAt: saved.lastConfirmedAt || 0
+          confirmedBy: item.lastConfirmedBy || '',
+          confirmedByName: item.lastConfirmedByName || '',
+          lastConfirmedTranslation: item.lastConfirmedTranslation,
+          lastConfirmedTranslationAuthor: item.lastConfirmedTranslationAuthor || '',
+          lastConfirmedTranslationAuthorName: item.lastConfirmedTranslationAuthorName || '',
+          lastConfirmedBy: item.lastConfirmedBy || '',
+          lastConfirmedByName: item.lastConfirmedByName || '',
+          lastConfirmedAt: item.lastConfirmedAt || 0
         });
-      }, undefined, false);
-      if (!result.committed) {
-        alert('Данные изменились. Откройте последнюю подтверждённую версию ещё раз.'); return;
-      }
+      await commitDatabaseUpdates(changedRecordFields(key, rawItem, current), captureDatabaseVersion());
       translationDrafts.delete(key);
       const input = Array.from(container.querySelectorAll('.translation-input')).find(el => el.dataset.key === key);
       if (input) { input.value = item.lastConfirmedTranslation; input._savedValue = input.value; }
@@ -1754,14 +1744,9 @@
     };
     const item = allData.find(d => d.key === key);
     if (!item) return;
-    stringsRef.child(key).transaction(current => {
-      if (!current) return;
-      const comments = Array.isArray(current.userComments) ? current.userComments : [];
-      current.userComments = [...comments, newComment].slice(-50);
-      return current;
-    }, undefined, false)
-      .then(result => {
-        if (!result.committed) { alert('Фраза удалена. Комментарий не сохранён.'); return; }
+    const commentKey = stringsRef.child(key).child('userComments').push().key;
+    commitDatabaseUpdates({ [`strings/${key}/userComments/${commentKey}`]: newComment }, captureDatabaseVersion())
+      .then(() => {
         input.value = '';
       })
       .catch(err => alert('Ошибка сохранения комментария: ' + err.message));
@@ -2253,7 +2238,7 @@
         const code = prompt('Для подтверждения введите слово "ВОССТАНОВИТЬ" (без кавычек):');
         if (code !== 'ВОССТАНОВИТЬ') { alert('Операция отменена. Код не совпадает.'); return; }
         if (!confirm('Последний шанс! Заменить всю базу данных содержимым файла?')) return;
-        db.ref().update({ strings: stringsData, metadata: metadataData })
+        db.ref().update({ strings: stringsData, metadata: { ...metadataData, revision: metadataRevision + 1 } })
           .then(() => {
             importedNumbers = Array.isArray(metadataData.importedNumbers) ? metadataData.importedNumbers : [];
             lastImportStructure = Array.isArray(metadataData.lastImportStructure) ? metadataData.lastImportStructure : [];
@@ -2326,6 +2311,7 @@
   // ========== МЕТАДАННЫЕ ==========
   metadataRef.on('value', (snapshot) => {
     const data = snapshot.val();
+    metadataRevision = (data && data.revision) || 0;
     {
       importedNumbers = (data && data.importedNumbers) || [];
       if (!data) { lastImportStructure = []; emptyStringIds = []; duplicateGroups = new Map(); render(); return; }
@@ -2364,7 +2350,7 @@
         translationAuthor: entry.translationAuthor || '',
         translationAuthorName: entry.translationAuthorName || '',
         wtsComment: (rawComment || '').trim(),
-        userComments: Array.isArray(rawComments) ? rawComments : [],
+        userComments: normalizeComments(rawComments),
         confirmed: entry.confirmed || false,
         confirmedBy: entry.confirmedBy || '',
         confirmedByName: entry.confirmedByName || '',
