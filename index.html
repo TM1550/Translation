@@ -635,28 +635,32 @@
 
   function makePattern(str) {
     if (!str) return '';
-    let cleaned = cleanWtsText(str, true);
-    cleaned = cleaned.replace(/\d+(?:\.\d+)?/g, '#');
-    cleaned = cleaned.replace(/<[^>]+>/g, '<TAG>');
-    return cleaned;
+    return replaceTextNumbers(cleanWtsText(str, true), () => '#');
   }
 
   function extractNumbers(str) {
-    const matches = str.match(/\d+(?:\.\d+)?/g);
-    return matches ? matches.map(Number) : [];
+    const numbers = [];
+    replaceTextNumbers(str, number => { numbers.push(number); return number; });
+    return numbers;
+  }
+
+  function replaceTextNumbers(text, replace) {
+    // Consume protected WTS tokens before looking for numbers in visible text.
+    return String(text ?? '').replace(/<[^>]*>|\|c(?:[0-9a-f]{8}|[0-9a-f]{6})|\|t[\s\S]*?\|t|\|a[\s\S]*?\|a|\|\||\d+(?:\.\d+)?/gi,
+      token => /^\d/.test(token) ? replace(token) : token);
   }
 
   function applyTranslationToMember(templateTranslation, original) {
     const numbers = extractNumbers(original);
     let index = 0;
-    return templateTranslation.replace(/\d+(?:\.\d+)?/g, function(match) {
+    return replaceTextNumbers(templateTranslation, function(match) {
       if (index < numbers.length) return numbers[index++];
       return match;
     });
   }
 
   function cleanWtsText(text, preserveLeading = false) {
-    const plain = String(text ?? '').replace(/\|c[0-9a-fA-F]{6,8}|\|r/g, '');
+    const plain = String(text ?? '').replace(/\|c(?:[0-9a-f]{8}|[0-9a-f]{6})|\|r/gi, '');
     const leading = preserveLeading ? (plain.match(/^[ \t]+/) || [''])[0] : '';
     return leading + plain.replace(/\s+/g, ' ').trim();
   }
@@ -667,11 +671,15 @@
 
   function buildContentIndex(data) {
     const index = new Map();
-    for (const [key, entry] of Object.entries(data)) {
+    for (const [key, entry] of stringEntries(data)) {
       const c = normalizeOriginalForCompare(entry.original);
       if (!index.has(c)) index.set(c, key);
     }
     return index;
+  }
+
+  function stringEntries(data) {
+    return Object.entries(data || {}).filter(([, entry]) => entry && typeof entry === 'object');
   }
 
   function buildGroups(dataArray) {
@@ -711,12 +719,6 @@
     const norm = normalizeOriginalForCompare(item.original);
     const ids = duplicateGroups.get(norm) || [];
     return ids.filter(id => id !== String(key));
-  }
-
-  function persistDuplicateGroups(groups) {
-    const arr = [];
-    for (const [, ids] of groups) arr.push({ ids });
-    return metadataRef.child('duplicateGroups').set(arr);
   }
 
   function findAllStructureIndicesByContent(oldContent) {
@@ -964,6 +966,50 @@
       'lastConfirmedBy', 'lastConfirmedByName', 'lastConfirmedAt'].map(k => entry[k] ?? (k === 'confirmed' ? false : k === 'lastConfirmedAt' ? 0 : '')));
   }
 
+  function recordToken(entry) {
+    return JSON.stringify([
+      versionToken({ ...entry, original: stripLineBreaks(entry.original), translation: stripLineBreaks(entry.translation) }),
+      (entry.wtsComment || entry.comment || '').trim(), entry.userComments || [], entry.inactive || false,
+      entry.originalEditedBy || '', entry.originalEditedByName || '', entry.originalEditedAt || 0
+    ]);
+  }
+
+  function metadataToken(metadata) {
+    return JSON.stringify([metadata.importedNumbers || [], metadata.lastImportStructure || [], metadata.emptyStringIds || []]);
+  }
+
+  function captureDatabaseVersion() {
+    return {
+      records: new Map(allData.map(entry => [entry.key, recordToken(entry)])),
+      metadata: metadataToken({ importedNumbers, lastImportStructure, emptyStringIds })
+    };
+  }
+
+  async function commitDatabaseUpdates(updates, expected) {
+    // Text, comments and WTS structure must still match the preview on every retry.
+    const result = await db.ref().transaction(current => {
+      if (!current || metadataToken(current.metadata || {}) !== expected.metadata) return;
+      const records = current.strings || {};
+      if (stringEntries(records).length !== expected.records.size) return;
+      for (const [key, token] of expected.records) {
+        if (!records[key] || recordToken(records[key]) !== token) return;
+      }
+      for (const [location, value] of Object.entries(updates)) {
+        const segments = location.split('/');
+        const field = segments.pop();
+        let parent = current;
+        for (const segment of segments) {
+          if (!parent[segment]) parent[segment] = {};
+          parent = parent[segment];
+        }
+        if (value === null) delete parent[field];
+        else parent[field] = value;
+      }
+      return current;
+    }, undefined, false);
+    if (!result.committed) throw new Error('Данные изменились у другого пользователя. Проверьте актуальную версию и повторите операцию.');
+  }
+
   async function saveTranslation(key, newTranslation) {
     const item = allData.find(d => d.key === key);
     const user = getCurrentUserInfo();
@@ -1130,7 +1176,7 @@
   // ========== РЕДАКТИРОВАНИЕ ОРИГИНАЛА ==========
   function saveOriginalEdit(key, newOriginal) {
     const user = getCurrentUserInfo();
-    if (user.role !== 'editor') {
+    if (!user.uid || user.role !== 'editor') {
       alert('Только редакторы могут изменять оригинальные фразы.');
       return;
     }
@@ -1138,6 +1184,7 @@
     const sourceItem = allData.find(d => d.key === key);
     const item = confirmedVersion(sourceItem) || sourceItem;
     if (!item) return;
+    const expected = captureDatabaseVersion();
 
     const newContent = stripLineBreaks(newOriginal);
     const oldOriginal = item.original || '';
@@ -1247,53 +1294,11 @@
       }
     }
 
-    db.ref().update(updates)
+    const nextStructure = lastImportStructure.map((entry, index) => structIndices.includes(index)
+      ? { ...entry, content: newContent, isEmpty: newContent === '' } : entry);
+    updates['metadata/duplicateGroups'] = Array.from(computeDuplicateGroups(nextStructure).values(), ids => ({ ids }));
+    commitDatabaseUpdates(updates, expected)
       .then(() => {
-        if (existingKey) {
-          allData = allData.filter(d => d.key !== key);
-          const targetItem = allData.find(d => d.key === existingKey.key);
-          if (targetItem) {
-            if (!targetItem.translation && item.translation) {
-              targetItem.translation = item.translation;
-              targetItem.translationAuthor = item.translationAuthor;
-              targetItem.translationAuthorName = item.translationAuthorName;
-              targetItem.confirmed = item.confirmed;
-              targetItem.confirmedBy = item.confirmedBy;
-              targetItem.confirmedByName = item.confirmedByName;
-              if (item.lastConfirmedTranslation) {
-                targetItem.lastConfirmedTranslation = item.lastConfirmedTranslation;
-                targetItem.lastConfirmedTranslationAuthor = item.lastConfirmedTranslationAuthor;
-                targetItem.lastConfirmedTranslationAuthorName = item.lastConfirmedTranslationAuthorName;
-                targetItem.lastConfirmedBy = item.lastConfirmedBy;
-                targetItem.lastConfirmedByName = item.lastConfirmedByName;
-                targetItem.lastConfirmedAt = item.lastConfirmedAt;
-              }
-            }
-            if (item.userComments && item.userComments.length > 0) {
-              targetItem.userComments =
-                [...(targetItem.userComments || []), ...item.userComments].slice(-50);
-            }
-          }
-        } else {
-          item.original = newContent;
-          item.originalEditedBy = user.uid;
-          item.originalEditedByName = user.displayName;
-          item.originalEditedAt = Date.now();
-          if (oldNorm !== newNorm && item.translation) {
-            item.confirmed = false;
-            item.confirmedBy = '';
-            item.confirmedByName = '';
-          }
-        }
-        for (const idx of structIndices) {
-          lastImportStructure[idx] = {
-            ...lastImportStructure[idx],
-            content: newContent,
-            isEmpty: newContent === ''
-          };
-        }
-        duplicateGroups = computeDuplicateGroups(lastImportStructure);
-        persistDuplicateGroups(duplicateGroups).catch(err => console.warn('duplicateGroups:', err));
         editingOriginalKey = null;
         render();
       })
@@ -1302,6 +1307,8 @@
 
   // ========== НЕАКТИВНОСТЬ ==========
   function toggleInactive(key) {
+    const user = getCurrentUserInfo();
+    if (!user.uid || user.role !== 'editor') { alert('Изменить активность фразы может только редактор.'); return; }
     const item = allData.find(d => d.key === key);
     if (!item) return;
 
@@ -1314,48 +1321,84 @@
 
     if (matchingKeys.length === 0) return;
 
-    for (const k of matchingKeys) {
-      const local = allData.find(d => d.key === k);
-      if (local) local.inactive = newState;
-    }
-
     const updates = {};
-    for (const k of matchingKeys) updates[k + '/inactive'] = newState;
+    for (const k of matchingKeys) updates[`strings/${k}/inactive`] = newState;
 
-    stringsRef.update(updates)
+    commitDatabaseUpdates(updates, captureDatabaseVersion())
       .then(() => { render(); })
       .catch(err => alert('Ошибка обновления статуса: ' + err.message));
   }
 
   // ========== ПОХОЖИЕ ==========
+  function similarityWords(text) {
+    const visible = String(text ?? '').normalize('NFKC').toLowerCase().replace(/ё/g, 'е')
+      .replace(/\|t[\s\S]*?\|t|\|a[\s\S]*?\|a|<[^>]*>/g, ' ')
+      .replace(/\|c(?:[0-9a-f]{8}|[0-9a-f]{6})|\|r/g, '')
+      .replace(/\|n/g, ' ');
+    return visible.match(/[\p{L}\p{N}]+/gu) || [];
+  }
+
+  function similarityFeatures(text) {
+    const tokens = similarityWords(text);
+    const normalized = tokens.join(' ');
+    const characters = Array.from(` ${normalized} `);
+    const grams = new Map();
+    for (let i = 0; i + 2 < characters.length; i++) {
+      const gram = characters.slice(i, i + 3).join('');
+      grams.set(gram, (grams.get(gram) || 0) + 1);
+    }
+    return { normalized, words: new Set(tokens), grams, gramCount: Math.max(0, characters.length - 2) };
+  }
+
+  let similarityCache = null;
+  function getSimilarityIndex() {
+    if (similarityCache && similarityCache.source === allData) return similarityCache;
+    const entries = allData.filter(entry => entry.confirmed && !entry.inactive && (entry.translation || '').trim() !== '')
+      .map(entry => ({ entry, features: similarityFeatures(entry.original) }));
+    const frequencies = new Map();
+    for (const { features } of entries) {
+      for (const word of features.words) frequencies.set(word, (frequencies.get(word) || 0) + 1);
+    }
+    similarityCache = { source: allData, entries, frequencies };
+    return similarityCache;
+  }
+
   function findSimilarConfirmedTranslations(original, excludeKey, maxResults = 5) {
-    const words = text => text.toLowerCase().replace(/[^a-zа-яё\s]/g, '').split(/\s+/).filter(w => w.length > 2);
-    const currentWords = words(original);
-    if (currentWords.length === 0) return [];
+    const current = similarityFeatures(original);
+    if (current.words.size === 0) return [];
+    const index = getSimilarityIndex();
+    const weight = word => 1 + Math.log((index.entries.length + 1) / ((index.frequencies.get(word) || 0) + 1));
     const results = [];
-    const currentNormalized = normalizeOriginalForCompare(original);
-
-    for (const entry of allData) {
-      if (entry.key === excludeKey) continue;
-      if (!entry.confirmed) continue;
-      if (!entry.translation || entry.translation === '') continue;
-      if (normalizeOriginalForCompare(entry.original) === currentNormalized) continue;
-
-      const entryWords = words(entry.original);
-      const common = currentWords.filter(w => entryWords.includes(w));
-      if (common.length === 0) continue;
-      const union = new Set([...currentWords, ...entryWords]);
-      const score = common.length / union.size;
+    for (const { entry, features } of index.entries) {
+      if (entry.key === String(excludeKey) || features.words.size === 0) continue;
+      const common = [...current.words].filter(word => features.words.has(word));
+      const union = new Set([...current.words, ...features.words]);
+      const intersectionWeight = common.reduce((sum, word) => sum + weight(word), 0);
+      const unionWeight = [...union].reduce((sum, word) => sum + weight(word), 0);
+      const wordScore = intersectionWeight / unionWeight;
+      let commonGrams = 0;
+      for (const [gram, count] of current.grams) commonGrams += Math.min(count, features.grams.get(gram) || 0);
+      const characterScore = 2 * commonGrams / (current.gramCount + features.gramCount);
+      const exact = current.normalized === features.normalized;
+      // Unique-word Jaccard and counted character Dice are both bounded by one.
+      const score = exact ? 1 : Math.min(1, 0.65 * wordScore + 0.35 * characterScore);
+      if (score < 0.2 || (common.length === 0 && characterScore < 0.6)) continue;
       results.push({
         key: entry.key,
         original: entry.original,
         translation: entry.translation,
         commonWords: common,
-        score: score
+        score, exact
       });
     }
-    results.sort((a, b) => b.score - a.score);
-    return results.slice(0, maxResults);
+    results.sort((a, b) => b.score - a.score || a.key.localeCompare(b.key, undefined, { numeric: true }));
+    const seen = new Set();
+    return results.filter(result => {
+      const identity = JSON.stringify([similarityWords(result.original), result.translation]);
+      if (seen.has(identity)) return false;
+      seen.add(identity);
+      return true;
+    }).slice(0, maxResults);
   }
 
   function showSimilarTranslations(key) {
@@ -1369,19 +1412,16 @@
     similarModalTitle.textContent = `Похожие подтверждённые переводы для #${key}`;
     let html = '';
     for (const s of similar) {
-      const words = s.original.split(/\s+/);
-      const highlighted = words.map(w => {
-        const clean = w.replace(/[^a-zа-яё0-9]/gi, '');
-        if (s.commonWords.includes(clean.toLowerCase())) {
-          return `<strong>${escapeHtml(w)}</strong>`;
-        }
-        return escapeHtml(w);
-      }).join(' ');
+      const highlighted = s.original.split(/(\|c(?:[0-9a-f]{8}|[0-9a-f]{6})|\|[rn]|\|t[\s\S]*?\|t|\|a[\s\S]*?\|a|<[^>]*>|[\p{L}\p{N}]+)/giu).map(part => {
+        const tokens = similarityWords(part);
+        return tokens.length === 1 && s.commonWords.includes(tokens[0])
+          ? `<strong>${escapeHtml(part)}</strong>` : escapeHtml(part);
+      }).join('');
       html += `
         <div class="modal-item">
           <div class="modal-header">
-            <span class="modal-key">#${s.key}</span>
-            <span class="modal-score">Сходство: ${(s.score * 100).toFixed(0)}%</span>
+            <span class="modal-key">#${escapeHtml(s.key)}</span>
+            <span class="modal-score">${s.exact ? 'Совпадение текста: 100%' : `Сходство: ${Math.min(99, Math.round(s.score * 100))}%`}</span>
           </div>
           <div class="modal-original">${highlighted}</div>
           <div class="modal-translation">Перевод: ${escapeHtml(s.translation)}</div>
@@ -1403,6 +1443,7 @@
     for (const input of container.querySelectorAll('.translation-input')) {
       if (input._savedValue !== undefined && input.value !== input._savedValue)
         translationDrafts.set(input.dataset.key, input.value);
+      else translationDrafts.delete(input.dataset.key);
     }
     renderContent();
     for (const input of container.querySelectorAll('.translation-input')) {
@@ -1468,7 +1509,7 @@
         let groupInfo = '';
         if (groupMode.checked && item._groupMembers && item._groupMembers.length > 1) {
           const members = item._groupMembers;
-          const keys = members.map(m => m.key).join(', ');
+          const keys = members.map(m => escapeHtml(m.key)).join(', ');
           groupInfo = `Группа (${members.length} шт: #${keys})`;
         }
 
@@ -1509,7 +1550,7 @@
         if (user.role === 'editor') {
           const dups = getDuplicatesForKey(key);
           if (dups.length > 0) {
-            duplicateInfo = `<div class="duplicate-info" title="Эти ID имеют такой же оригинал">🔗 Также: #${dups.join(', #')}</div>`;
+            duplicateInfo = `<div class="duplicate-info" title="Эти ID имеют такой же оригинал">🔗 Также: #${dups.map(escapeHtml).join(', #')}</div>`;
           }
         }
         let originalAuthorInfo = '';
@@ -1549,7 +1590,7 @@
           if (editingOriginalKey === key) {
             leftColHtml = `
               <div class="left-col">
-                <div class="meta">#${key}</div>
+                <div class="meta">#${safeKey}</div>
                 <textarea class="original-edit-input" data-key="${safeKey}" rows="3">${escapeHtml(original)}</textarea>
                 <div class="original-edit-buttons">
                   <button class="original-save-btn" data-key="${safeKey}">💾 Сохранить</button>
@@ -1563,7 +1604,7 @@
           } else {
             leftColHtml = `
               <div class="left-col">
-                <div class="meta">#${key}</div>
+                <div class="meta">#${safeKey}</div>
                 <div class="original">${escapeHtml(original)}</div>
                 <button class="original-edit-btn" data-key="${safeKey}">✏️ Изменить оригинал</button>
                 ${groupInfo ? `<div class="group-info">${groupInfo}</div>` : ''}
@@ -1575,7 +1616,7 @@
         } else {
           leftColHtml = `
             <div class="left-col">
-              <div class="meta">#${key}</div>
+              <div class="meta">#${safeKey}</div>
               <div class="original">${escapeHtml(original)}</div>
               ${groupInfo ? `<div class="group-info">${groupInfo}</div>` : ''}
               ${duplicateInfo}
@@ -1791,6 +1832,7 @@
     reader.onload = function(e) {
       try {
         const text = e.target.result;
+        const expected = captureDatabaseVersion();
         const allParsed = parseWTS(text);
         const parsed = allParsed.filter(p => !p.isEmpty);
         const emptyParsed = allParsed.filter(p => p.isEmpty);
@@ -1924,20 +1966,16 @@
         const dupGroupsArr = [];
         for (const [, ids] of dupGroups) dupGroupsArr.push({ ids });
 
-        const rootUpdates = { metadata: {
-          importedNumbers: numbers,
-          lastImportStructure: structure,
-          emptyStringIds: emptyIds,
-          duplicateGroups: dupGroupsArr
-        } };
+        const rootUpdates = {
+          'metadata/importedNumbers': numbers,
+          'metadata/lastImportStructure': structure,
+          'metadata/emptyStringIds': emptyIds,
+          'metadata/duplicateGroups': dupGroupsArr
+        };
         for (const [key, value] of Object.entries(updates)) rootUpdates[`strings/${key}`] = value;
 
-        db.ref().update(rootUpdates)
+        commitDatabaseUpdates(rootUpdates, expected)
           .then(() => {
-            importedNumbers = numbers;
-            lastImportStructure = structure;
-            emptyStringIds = emptyIds;
-            duplicateGroups = dupGroups;
             filterHideUnnecessary.checked = true;
             currentPage = 0;
 
@@ -1973,6 +2011,7 @@
     reader.onload = function(e) {
       try {
         const text = e.target.result;
+        const expected = captureDatabaseVersion();
         const allParsed = parseWTS(text);
         const parsed = allParsed.filter(p => !p.isEmpty);
 
@@ -2056,13 +2095,10 @@
         )) return;
         const fieldUpdates = {};
         for (const [key, data] of Object.entries(updates)) {
-          for (const [field, value] of Object.entries(data)) fieldUpdates[`${key}/${field}`] = value;
+          for (const [field, value] of Object.entries(data)) fieldUpdates[`strings/${key}/${field}`] = value;
         }
-        stringsRef.update(fieldUpdates)
+        commitDatabaseUpdates(fieldUpdates, expected)
           .then(() => {
-            for (const item of allData) {
-              if (updates[item.key]) Object.assign(item, updates[item.key]);
-            }
             render();
             alert(
               `Обновлено переводов: ${added}.\n` +
@@ -2101,8 +2137,7 @@
         emptyCount++;
       } else if (!originalsOnly) {
         const key = index.get(normalizeOriginalForCompare(content));
-        if (key === undefined) continue;
-        const translation = stripLineBreaks(data[key].translation);
+        const translation = key === undefined ? '' : stripLineBreaks(data[key].translation);
         if (translation !== '') text = translation;
       }
       const comment = cleanComment(s.comment);
@@ -2318,7 +2353,7 @@
   stringsRef.on('value', (snapshot) => {
     const data = snapshot.val();
     if (!data) { allData = []; render(); return; }
-    const entries = Object.entries(data).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
+    const entries = stringEntries(data).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
     allData = entries.map(([key, entry]) => {
       let rawComment = entry.wtsComment || entry.comment || '';
       let rawComments = entry.userComments || [];
