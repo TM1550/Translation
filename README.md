@@ -16,7 +16,7 @@
 
 ## Проверка и публикация
 
-Для проверок нужны Node.js 22+, Java 21+ и Firebase CLI.
+Для проверок нужны Node.js 24.12+, Java 21+ и Firebase CLI.
 
 ```sh
 npm ci
